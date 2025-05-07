@@ -1,0 +1,11 @@
+#
+# To activate this environment, use
+#
+#     $ conda activate drone_project
+#
+# To deactivate an active environment, use
+#
+#     $ conda deactivate
+
+
+pip install -r requirements.txt
