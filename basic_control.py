@@ -128,9 +128,9 @@ def main2():
 				drone.move_left(30)
 			elif key == ord('d'):
 				drone.move_right(30)
-			elif key == 82:  # UP arrow
+			elif key == ord('u'):  # UP arrow
 				drone.move_up(60)
-			elif key == 84:  # DOWN arrow
+			elif key == ord('j'):  # DOWN arrow
 				drone.move_down(30)
 			elif key == 81:  # LEFT arrow
 				drone.rotate_counter_clockwise(30)
@@ -150,4 +150,4 @@ def main2():
 
 
 if __name__ == '__main__':
-	main()
+	main2()

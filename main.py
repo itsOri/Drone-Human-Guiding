@@ -10,6 +10,13 @@ HEIGHT = 480
 selected_id = None
 
 
+RECT_CENTER = (WIDTH // 2, HEIGHT // 2 + 50)
+RECT_W, RECT_H = 200, 200
+
+RECT_TOP_LEFT = (RECT_CENTER[0] - RECT_W // 2, RECT_CENTER[1] - RECT_H // 2)
+RECT_BOTTOM_RIGHT = (RECT_CENTER[0] + RECT_W // 2, RECT_CENTER[1] + RECT_H // 2)
+
+
 def start_drone():
 	drone = Tello()
 	drone.connect()
@@ -82,7 +89,7 @@ def init_id_getter_thread(selected_id_container):
 	"""
 	Initializes and starts a background thread to continuously get user input.
 	"""
-	thread = threading.Thread(target=input_thread, args=(selected_id_container))
+	thread = threading.Thread(target=input_thread, args=(selected_id_container,))
 	thread.daemon = True
 	thread.start()
 	return thread
@@ -130,9 +137,21 @@ def find_id_in_frame(results, selected_id_container):
 			print("[INPUT] Please enter a new ID to select.")
 			return False
 		
+
 def is_alive(thread):
 	if(thread is None): return False
 	return thread.is_alive()
+
+
+def draw_frame_addons(annotated_frame, coords):
+	# Draw rectangle
+	cv2.rectangle(annotated_frame, RECT_TOP_LEFT, RECT_BOTTOM_RIGHT, (0, 0, 255), 2)
+	
+	if(coords != None):
+		x1, y1, x2, y2, center_x, center_y = coords
+		# Draw red point at coords
+		cv2.circle(annotated_frame, (center_x, center_y), radius=3, color=(0, 0, 255), thickness=-1)
+
 
 def main():
 	print("START!")
@@ -155,12 +174,9 @@ def main():
 				print("[WARN] No frame received.")
 				continue
 			
-			results = model.track(frame, persist=True, verbose=False)
+			results = model.track(frame, persist=True, verbose=False, tracker="bytetrack.yaml")
 			annotated_frame = results[0].plot() # this is the frame with boxes and ids after track()
 
-
-			cv2.imshow('Tello Video Feed', annotated_frame)
-			out.write(cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
 
 			if((selected_id_container["id"] is None) and not is_alive(getter_thread)):
 				getter_thread = init_id_getter_thread(selected_id_container)
@@ -174,6 +190,13 @@ def main():
 				# Do actions using coords!
 				print(f"Center coordinates: ({center_x}, {center_y})")
 			
+
+			draw_frame_addons(annotated_frame, coords)
+
+			cv2.imshow('Tello Video Feed', annotated_frame)
+			out.write(cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
+
+
 			if should_quit():
 				break
 
