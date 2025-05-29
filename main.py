@@ -16,6 +16,7 @@ RECT_W, RECT_H = 200, 200
 RECT_TOP_LEFT = (RECT_CENTER[0] - RECT_W // 2, RECT_CENTER[1] - RECT_H // 2)
 RECT_BOTTOM_RIGHT = (RECT_CENTER[0] + RECT_W // 2, RECT_CENTER[1] + RECT_H // 2)
 
+BLACK = (0, 0, 0)
 
 def start_drone():
 	drone = Tello()
@@ -167,7 +168,7 @@ def draw_frame_addons(annotated_frame, coords):
 
 def control_drone(drone, coords, frame):
 	if coords is None:
-		return 
+		return 0,0,0,0
 
 	x1, y1, x2, y2, center_x, center_y = coords
 
@@ -175,14 +176,14 @@ def control_drone(drone, coords, frame):
 	if center_y < RECT_TOP_LEFT[1]:
 		cv2.putText(frame, "FORWARD", 
                     (RECT_TOP_LEFT[0] + 20, RECT_TOP_LEFT[1] - 20), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, BLACK, 2)
 		drone.for_back_velocity = 35
 
 	# if person below rectangle, need to go backward
 	elif center_y > RECT_BOTTOM_RIGHT[1]:
 		cv2.putText(frame, "BACKWARD", 
                     (RECT_TOP_LEFT[0] + 20, RECT_TOP_LEFT[1] - 20), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, BLACK, 2)
 		drone.for_back_velocity = -35
 
 	else:
@@ -191,17 +192,47 @@ def control_drone(drone, coords, frame):
 	if center_x < RECT_TOP_LEFT[0]:
 		cv2.putText(frame, "<- ROTATE LEFT <-",
 			(RECT_TOP_LEFT[0] - 110, (RECT_TOP_LEFT[1] + RECT_BOTTOM_RIGHT[1]) // 2),
-			cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
+			cv2.FONT_HERSHEY_SIMPLEX, 0.8, BLACK, 2)
 		drone.yaw_velocity = -30
 	# ROTATE RIGHT if center_x is to the right of the rectangle
 	elif center_x > RECT_BOTTOM_RIGHT[0]:
 		cv2.putText(frame, "-> ROTATE RIGHT ->",
 		            (RECT_BOTTOM_RIGHT[0] + 20, (RECT_TOP_LEFT[1] + RECT_BOTTOM_RIGHT[1]) // 2),
-		            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)		
+		            cv2.FONT_HERSHEY_SIMPLEX, 0.8, BLACK, 2)		
 		drone.yaw_velocity = 30
 	else:
 		drone.yaw_velocity = 0
+
+	return drone.left_right_velocity, drone.for_back_velocity, drone.up_down_velocity, drone.yaw_velocity
 	
+
+
+
+
+def move_drone(drone):
+	key = cv2.waitKey(1) & 0xFF
+
+	if key == ord('t'):
+		drone.takeoff()
+	elif key == ord('l'):
+		drone.land()
+	elif key == ord('w'):
+		drone.move_forward(60)
+	elif key == ord('s'):
+		drone.move_back(30)
+	elif key == ord('a'):
+		drone.move_left(30)
+	elif key == ord('d'):
+		drone.move_right(30)
+	elif key == ord('u'):  # UP arrow
+		drone.move_up(60)
+	elif key == ord('j'):  # DOWN arrow
+		drone.move_down(30)
+	elif key == 81:  # LEFT arrow
+		drone.rotate_counter_clockwise(30)
+	elif key == 83:  # RIGHT arrow
+		drone.rotate_clockwise(30)
+
 	
 def main():
 	print("START!")
@@ -239,8 +270,20 @@ def main():
 				x1, y1, x2, y2, center_x, center_y = coords
 				# Do actions using coords!
 				print(f"Center coordinates: ({center_x}, {center_y})")
+
+			drone.left_right_velocity, drone.for_back_velocity, drone.up_down_velocity, drone.yaw_velocity = control_drone(drone, coords, annotated_frame)
 			
-			control_drone(drone, coords, annotated_frame)
+			# keep alive command
+			drone.send_control_command("command")
+
+			# SEND VELOCITY VALUES TO TELLO
+			
+			if drone.send_rc_control:
+				drone.send_rc_control(drone.left_right_velocity, drone.for_back_velocity, drone.up_down_velocity, drone.yaw_velocity)
+
+			
+			
+			move_drone(drone)
 
 			draw_frame_addons(annotated_frame, coords)
 
