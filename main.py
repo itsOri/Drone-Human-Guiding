@@ -20,6 +20,14 @@ RECT_BOTTOM_RIGHT = (RECT_CENTER[0] + RECT_W // 2, RECT_CENTER[1] + RECT_H // 2)
 def start_drone():
 	drone = Tello()
 	drone.connect()
+
+	drone.for_back_velocity = 0
+	drone.left_right_velocity = 0
+	drone.up_down_velocity = 0
+	drone.yaw_velocity = 0
+	drone.speed = 0
+	drone.TIME_BTW_RC_CONTROL_COMMANDS = 0.1
+
 	print(f"Battery: {drone.get_battery()}%")
 
 	drone.streamoff()
@@ -67,8 +75,12 @@ def exit(out, drone):
 
 def launch_drone(drone):
 	# do takeoff
+	drone.takeoff()
 	return
 
+def shutdown_drone(drone):
+	drone.land()
+	return
 
 # def get_id(result):
 # 	return
@@ -153,6 +165,44 @@ def draw_frame_addons(annotated_frame, coords):
 		cv2.circle(annotated_frame, (center_x, center_y), radius=3, color=(0, 0, 255), thickness=-1)
 
 
+def control_drone(drone, coords, frame):
+	if coords is None:
+		return 
+
+	x1, y1, x2, y2, center_x, center_y = coords
+
+	# if person above rectangle, need to go forward
+	if center_y < RECT_TOP_LEFT[1]:
+		cv2.putText(frame, "FORWARD", 
+                    (RECT_TOP_LEFT[0] + 20, RECT_TOP_LEFT[1] - 20), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+		drone.for_back_velocity = 35
+
+	# if person below rectangle, need to go backward
+	elif center_y > RECT_BOTTOM_RIGHT[1]:
+		cv2.putText(frame, "BACKWARD", 
+                    (RECT_TOP_LEFT[0] + 20, RECT_TOP_LEFT[1] - 20), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+		drone.for_back_velocity = -35
+
+	else:
+		drone.for_back_velocity = 0
+
+	if center_x < RECT_TOP_LEFT[0]:
+		cv2.putText(frame, "<- ROTATE LEFT <-",
+			(RECT_TOP_LEFT[0] - 110, (RECT_TOP_LEFT[1] + RECT_BOTTOM_RIGHT[1]) // 2),
+			cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
+		drone.yaw_velocity = -30
+	# ROTATE RIGHT if center_x is to the right of the rectangle
+	elif center_x > RECT_BOTTOM_RIGHT[0]:
+		cv2.putText(frame, "-> ROTATE RIGHT ->",
+		            (RECT_BOTTOM_RIGHT[0] + 20, (RECT_TOP_LEFT[1] + RECT_BOTTOM_RIGHT[1]) // 2),
+		            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)		
+		drone.yaw_velocity = 30
+	else:
+		drone.yaw_velocity = 0
+	
+	
 def main():
 	print("START!")
 
@@ -190,6 +240,7 @@ def main():
 				# Do actions using coords!
 				print(f"Center coordinates: ({center_x}, {center_y})")
 			
+			control_drone(drone, coords, annotated_frame)
 
 			draw_frame_addons(annotated_frame, coords)
 
@@ -198,6 +249,7 @@ def main():
 
 
 			if should_quit():
+				shutdown_drone(drone)
 				break
 
 			time.sleep(1/30)  # reduce CPU load, aiming for 30fps
