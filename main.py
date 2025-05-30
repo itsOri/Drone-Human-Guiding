@@ -255,7 +255,7 @@ def main():
 				print("[WARN] No frame received.")
 				continue
 			
-			results = model.track(frame, persist=True, verbose=False, tracker="bytetrack.yaml")
+			results = model.track(frame, persist=True, verbose=False, tracker="bytetrack.yaml", classes=[0])
 			annotated_frame = results[0].plot() # this is the frame with boxes and ids after track()
 
 
