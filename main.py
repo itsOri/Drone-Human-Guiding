@@ -3,6 +3,8 @@ import time
 from djitellopy import Tello
 from ultralytics import YOLO
 import threading
+import numpy as np
+import os
 
 
 WIDTH = 640
@@ -11,15 +13,15 @@ selected_id = None
 
 
 RECT_CENTER = (WIDTH // 2, HEIGHT // 2 + 50)
-RECT_W, RECT_H = 200, 200
+RECT_W, RECT_H = 100, 100
 
 RECT_TOP_LEFT = (RECT_CENTER[0] - RECT_W // 2, RECT_CENTER[1] - RECT_H // 2)
 RECT_BOTTOM_RIGHT = (RECT_CENTER[0] + RECT_W // 2, RECT_CENTER[1] + RECT_H // 2)
 
 BLACK = (0, 0, 0)
 
-YAW_MOVING_VELOCITY = 20
-FB_MOVING_VELOCITY = 20
+YAW_MOVING_VELOCITY = 10
+FB_MOVING_VELOCITY = 10
 
 def start_drone():
 	drone = Tello()
@@ -80,6 +82,7 @@ def exit(out, drone):
 def launch_drone(drone):
 	# do takeoff
 	drone.takeoff()
+	drone.move_up(60)
 	return
 
 def shutdown_drone(drone):
@@ -179,60 +182,69 @@ def control_drone(drone, coords, frame, histerezis_enabled, histerezis_on):
 	# if person above rectangle, need to go forward
 	if center_y < RECT_TOP_LEFT[1] :
 		cv2.putText(frame, "FORWARD", 
-                    (RECT_TOP_LEFT[0] + 20, RECT_TOP_LEFT[1] - 20), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, BLACK, 2)
+					(RECT_TOP_LEFT[0] + 20, RECT_TOP_LEFT[1] - 20), 
+					cv2.FONT_HERSHEY_SIMPLEX, 1, BLACK, 2)
 		drone.for_back_velocity = FB_MOVING_VELOCITY
+		if histerezis_enabled: histerezis_on["up"] = True
 
 	# if person below rectangle, need to go backward
 	elif center_y > RECT_BOTTOM_RIGHT[1] :
 		cv2.putText(frame, "BACKWARD", 
-                    (RECT_TOP_LEFT[0] + 20, RECT_TOP_LEFT[1] - 20), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, BLACK, 2)
+					(RECT_TOP_LEFT[0] + 20, RECT_TOP_LEFT[1] - 20), 
+					cv2.FONT_HERSHEY_SIMPLEX, 1, BLACK, 2)
 		drone.for_back_velocity = -FB_MOVING_VELOCITY
+		if histerezis_enabled: histerezis_on["down"] = True
 	else:
+		
+		if histerezis_enabled:
+			#y-axis histerezis effects
+			if(histerezis_on["up"]):
+				if(center_y > RECT_TOP_LEFT[1] + RECT_H//2):
+					histerezis_on["up"] = False
+					drone.for_back_velocity = 0
+				else:
+					drone.for_back_velocity = FB_MOVING_VELOCITY
+			elif(histerezis_on["down"]):
+				if(center_y < RECT_BOTTOM_RIGHT[1] - RECT_H//2):
+					histerezis_on["down"] = False
+					drone.for_back_velocity = 0
+				else:
+					drone.for_back_velocity = -FB_MOVING_VELOCITY
+		else:
 			drone.for_back_velocity = 0
+
 
 	if center_x < RECT_TOP_LEFT[0]:
 		cv2.putText(frame, "<- ROTATE LEFT <-",
 			(RECT_TOP_LEFT[0] - 110, (RECT_TOP_LEFT[1] + RECT_BOTTOM_RIGHT[1]) // 2),
 			cv2.FONT_HERSHEY_SIMPLEX, 0.8, BLACK, 2)
 		drone.yaw_velocity = -YAW_MOVING_VELOCITY
+		if histerezis_enabled: histerezis_on["left"] = True
 	# ROTATE RIGHT if center_x is to the right of the rectangle
 	elif center_x > RECT_BOTTOM_RIGHT[0]:
 		cv2.putText(frame, "-> ROTATE RIGHT ->",
-		            (RECT_BOTTOM_RIGHT[0] + 20, (RECT_TOP_LEFT[1] + RECT_BOTTOM_RIGHT[1]) // 2),
-		            cv2.FONT_HERSHEY_SIMPLEX, 0.8, BLACK, 2)		
+					(RECT_BOTTOM_RIGHT[0] + 20, (RECT_TOP_LEFT[1] + RECT_BOTTOM_RIGHT[1]) // 2),
+					cv2.FONT_HERSHEY_SIMPLEX, 0.8, BLACK, 2)		
 		drone.yaw_velocity = YAW_MOVING_VELOCITY
+		if histerezis_enabled: histerezis_on["right"] = True
 	else:
-		drone.yaw_velocity = 0
-
-	if histerezis_enabled:
-		#y-axis histerezis effects
-		if(histerezis_on["down"]):
-			if(center_y > RECT_TOP_LEFT[1] + RECT_H//2):
-				histerezis_on["down"] = False
-				drone.for_back_velocity = 0
-			else:
-				drone.for_back_velocity = FB_MOVING_VELOCITY
-		elif(histerezis_on["up"]):
-			if(center_y < RECT_BOTTOM_RIGHT[1] - RECT_H//2):
-				histerezis_on["up"] = False
-				drone.for_back_velocity = 0
-			else:
-				drone.for_back_velocity = -FB_MOVING_VELOCITY
-		#x-axis histerezis effects
-		if(histerezis_on["right"]):
-			if(center_x > RECT_TOP_LEFT[0] + RECT_W//2):
-				histerezis_on["right"] = False
-				drone.yaw_velocity = 0
-			else:
-				drone.yaw_velocity = YAW_MOVING_VELOCITY
-		elif(histerezis_on["left"]):
-			if(center_x < RECT_BOTTOM_RIGHT[0] - RECT_W//2):
-				histerezis_on["left"] = False
-				drone.yaw_velocity = 0
-			else:
-				drone.yaw_velocity = -YAW_MOVING_VELOCITY
+		if histerezis_enabled:
+			
+			#x-axis histerezis effects
+			if(histerezis_on["left"]):
+				if(center_x > RECT_TOP_LEFT[0] + RECT_W//2):
+					histerezis_on["left"] = False
+					drone.yaw_velocity = 0
+				else:
+					drone.yaw_velocity = -YAW_MOVING_VELOCITY
+			elif(histerezis_on["right"]):
+				if(center_x < RECT_BOTTOM_RIGHT[0] - RECT_W//2):
+					histerezis_on["right"] = False
+					drone.yaw_velocity = 0
+				else:
+					drone.yaw_velocity = YAW_MOVING_VELOCITY
+		else:
+			drone.yaw_velocity = 0
 
 	return drone.left_right_velocity, drone.for_back_velocity, drone.up_down_velocity, drone.yaw_velocity
 	
@@ -256,6 +268,7 @@ def move_drone(drone):
 	elif key == ord('d'):
 		drone.move_right(30)
 	elif key == ord('u'):  # UP arrow
+		print("up")
 		drone.move_up(60)
 	elif key == ord('j'):  # DOWN arrow
 		drone.move_down(30)
@@ -265,6 +278,41 @@ def move_drone(drone):
 		drone.rotate_clockwise(30)
 
 	
+def save_segmented_persons(results, frame):
+	# Make sure the output folder exists
+	output_dir = "persons_segmented"
+	os.makedirs(output_dir, exist_ok=True)
+
+	for result in results:
+		# For each detection
+
+		# checks if any of the data is None, if one of them is None goes to next result
+		if (not result.boxes.cls) or (not result.masks.data) or (not result.boxes.id) or (not result.boxes.xyxy):
+			continue
+
+		# save segmented person in folder output_dir
+		for mask, cls, track_id, box in zip(result.masks.data, result.boxes.cls, result.boxes.id, result.boxes.xyxy):
+			if int(cls) == 0:  # 0 = person (COCO)
+				x1, y1, x2, y2 = map(int, box.tolist())
+				person_mask = mask.cpu().numpy()
+				mask_uint8 = (person_mask * 255).astype("uint8")
+
+				# Crop both mask and image to bbox
+				mask_cropped = mask_uint8[y1:y2, x1:x2]
+				# Frame is in RGB; convert to BGR for saving
+				person_crop = frame[y1:y2, x1:x2]
+
+				# Apply the mask: make background black
+				person_crop_masked = cv2.bitwise_and(person_crop, person_crop, mask=mask_cropped)
+
+				# Save with id in filename
+				save_path = os.path.join(output_dir, f"person_id_{int(track_id)}.png")
+				# Convert from RGB to BGR for saving
+				person_crop_masked_bgr = cv2.cvtColor(person_crop_masked, cv2.COLOR_RGB2BGR)
+				print("[SAVING...]Saving frame")
+				cv2.imwrite(save_path, person_crop_masked_bgr)
+
+
 def main():
 	print("START!")
 
@@ -279,6 +327,18 @@ def main():
 	out = start_recording()
 	launch_drone(drone)
 
+
+
+
+	# print("[TEST][TEST][TEST][TEST][TEST] Rotating left 10 units")
+	# drone.yaw_velocity = 180
+	# drone.send_rc_control(0, 0, 0, drone.yaw_velocity)
+	# time.sleep(4)
+	# print("after rotation")
+	# drone.yaw_velocity = -180
+	# drone.send_rc_control(0, 0, 0, drone.yaw_velocity)
+
+
 	try:
 		while True:
 			frame = get_frame(drone)
@@ -287,6 +347,7 @@ def main():
 				continue
 			
 			results = model.track(frame, persist=True, verbose=False, tracker="bytetrack.yaml", classes=[0])
+			# if(selected_id_container["id"]): save_segmented_persons(results, frame)
 			annotated_frame = results[0].plot() # this is the frame with boxes and ids after track()
 
 
@@ -317,8 +378,6 @@ def main():
 			if drone.send_rc_control:
 				drone.send_rc_control(drone.left_right_velocity, drone.for_back_velocity, drone.up_down_velocity, drone.yaw_velocity)
 
-			
-			
 			move_drone(drone)
 
 			draw_frame_addons(annotated_frame, coords)
