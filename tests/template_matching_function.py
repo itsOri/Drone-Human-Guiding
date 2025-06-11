@@ -1,5 +1,7 @@
-def match_corr(corr_obj, path):
+def template_matching(template_obj, image):
     """
+    returns the best score of correlation between the template object and the image
+    
     return the center coordinates of the location of 'corr_obj' in 'img'.
     :param corr_obj: 2D numpy array of size [H_obj x W_obj] 
                      containing an image of a component.
