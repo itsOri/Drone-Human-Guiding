@@ -11,17 +11,30 @@ WIDTH = 640
 HEIGHT = 480
 selected_id = None
 
-
 RECT_CENTER = (WIDTH // 2, HEIGHT // 2 + 50)
-RECT_W, RECT_H = 100, 100
+RECT_W, RECT_H = 200, 200
+CONST_RECT_TOP_LEFT = (RECT_CENTER[0] - RECT_W // 2, RECT_CENTER[1] - RECT_H // 2)
+CONST_RECT_BOTTOM_RIGHT = (RECT_CENTER[0] - RECT_W // 2, RECT_CENTER[1] - RECT_H // 2)
+DYNAMIC_RECT = True
 
-RECT_TOP_LEFT = (RECT_CENTER[0] - RECT_W // 2, RECT_CENTER[1] - RECT_H // 2)
-RECT_BOTTOM_RIGHT = (RECT_CENTER[0] + RECT_W // 2, RECT_CENTER[1] + RECT_H // 2)
+
+#RECT_TOP_LEFT = (RECT_CENTER[0] - RECT_W // 2, RECT_CENTER[1] - RECT_H // 2)
+#RECT_BOTTOM_RIGHT = (RECT_CENTER[0] + RECT_W // 2, RECT_CENTER[1] + RECT_H // 2)
 
 BLACK = (0, 0, 0)
 
 YAW_MOVING_VELOCITY = 10
 FB_MOVING_VELOCITY = 10
+
+def RECT_TOP_LEFT():
+	if(DYNAMIC_RECT is False): 
+		return CONST_RECT_TOP_LEFT
+	return (RECT_CENTER[0] - RECT_W // 2, RECT_CENTER[1] - RECT_H // 2)
+
+def RECT_BOTTOM_RIGHT():
+	if(DYNAMIC_RECT): 
+		return CONST_RECT_BOTTOM_RIGHT
+	return (RECT_CENTER[0] + RECT_W // 2, RECT_CENTER[1] + RECT_H // 2)
 
 def start_drone():
 	drone = Tello()
@@ -164,7 +177,7 @@ def is_alive(thread):
 
 def draw_frame_addons(annotated_frame, coords):
 	# Draw rectangle
-	cv2.rectangle(annotated_frame, RECT_TOP_LEFT, RECT_BOTTOM_RIGHT, (0, 0, 255), 2)
+	cv2.rectangle(annotated_frame, RECT_TOP_LEFT(), RECT_BOTTOM_RIGHT(), (0, 0, 255), 2)
 	
 	if(coords != None):
 		x1, y1, x2, y2, center_x, center_y = coords
@@ -178,11 +191,11 @@ def control_drone(drone, coords, frame, histerezis_enabled, histerezis_on):
 		return 0,0,0,0
 	
 	x1, y1, x2, y2, center_x, center_y = coords
-
+	RECT_W, RECT_H = min(y2-y1, x2-x1)
 	# if person above rectangle, need to go forward
-	if center_y < RECT_TOP_LEFT[1] :
+	if center_y < RECT_TOP_LEFT()[1] :
 		cv2.putText(frame, "FORWARD", 
-					(RECT_TOP_LEFT[0] + 20, RECT_TOP_LEFT[1] - 20), 
+					(RECT_TOP_LEFT()[0] + 20, RECT_TOP_LEFT()[1] - 20), 
 					cv2.FONT_HERSHEY_SIMPLEX, 1, BLACK, 2)
 		drone.for_back_velocity = FB_MOVING_VELOCITY
 		if histerezis_enabled: histerezis_on["up"] = True
@@ -190,7 +203,7 @@ def control_drone(drone, coords, frame, histerezis_enabled, histerezis_on):
 	# if person below rectangle, need to go backward
 	elif center_y > RECT_BOTTOM_RIGHT[1] :
 		cv2.putText(frame, "BACKWARD", 
-					(RECT_TOP_LEFT[0] + 20, RECT_TOP_LEFT[1] - 20), 
+					(RECT_TOP_LEFT()[0] + 20, RECT_TOP_LEFT()[1] - 20), 
 					cv2.FONT_HERSHEY_SIMPLEX, 1, BLACK, 2)
 		drone.for_back_velocity = -FB_MOVING_VELOCITY
 		if histerezis_enabled: histerezis_on["down"] = True
@@ -199,13 +212,13 @@ def control_drone(drone, coords, frame, histerezis_enabled, histerezis_on):
 		if histerezis_enabled:
 			#y-axis histerezis effects
 			if(histerezis_on["up"]):
-				if(center_y > RECT_TOP_LEFT[1] + RECT_H//2):
+				if(center_y > RECT_TOP_LEFT()[1] + RECT_H//2):
 					histerezis_on["up"] = False
 					drone.for_back_velocity = 0
 				else:
 					drone.for_back_velocity = FB_MOVING_VELOCITY
 			elif(histerezis_on["down"]):
-				if(center_y < RECT_BOTTOM_RIGHT[1] - RECT_H//2):
+				if(center_y < RECT_BOTTOM_RIGHT()[1] - RECT_H//2):
 					histerezis_on["down"] = False
 					drone.for_back_velocity = 0
 				else:
@@ -214,16 +227,16 @@ def control_drone(drone, coords, frame, histerezis_enabled, histerezis_on):
 			drone.for_back_velocity = 0
 
 
-	if center_x < RECT_TOP_LEFT[0]:
+	if center_x < RECT_TOP_LEFT()[0]:
 		cv2.putText(frame, "<- ROTATE LEFT <-",
-			(RECT_TOP_LEFT[0] - 110, (RECT_TOP_LEFT[1] + RECT_BOTTOM_RIGHT[1]) // 2),
+			(RECT_TOP_LEFT()[0] - 110, (RECT_TOP_LEFT()[1] + RECT_BOTTOM_RIGHT()[1]) // 2),
 			cv2.FONT_HERSHEY_SIMPLEX, 0.8, BLACK, 2)
 		drone.yaw_velocity = -YAW_MOVING_VELOCITY
 		if histerezis_enabled: histerezis_on["left"] = True
 	# ROTATE RIGHT if center_x is to the right of the rectangle
-	elif center_x > RECT_BOTTOM_RIGHT[0]:
+	elif center_x > RECT_BOTTOM_RIGHT()[0]:
 		cv2.putText(frame, "-> ROTATE RIGHT ->",
-					(RECT_BOTTOM_RIGHT[0] + 20, (RECT_TOP_LEFT[1] + RECT_BOTTOM_RIGHT[1]) // 2),
+					(RECT_BOTTOM_RIGHT()[0] + 20, (RECT_TOP_LEFT()[1] + RECT_BOTTOM_RIGHT()[1]) // 2),
 					cv2.FONT_HERSHEY_SIMPLEX, 0.8, BLACK, 2)		
 		drone.yaw_velocity = YAW_MOVING_VELOCITY
 		if histerezis_enabled: histerezis_on["right"] = True
@@ -232,13 +245,13 @@ def control_drone(drone, coords, frame, histerezis_enabled, histerezis_on):
 			
 			#x-axis histerezis effects
 			if(histerezis_on["left"]):
-				if(center_x > RECT_TOP_LEFT[0] + RECT_W//2):
+				if(center_x > RECT_TOP_LEFT()[0] + RECT_W//2):
 					histerezis_on["left"] = False
 					drone.yaw_velocity = 0
 				else:
 					drone.yaw_velocity = -YAW_MOVING_VELOCITY
 			elif(histerezis_on["right"]):
-				if(center_x < RECT_BOTTOM_RIGHT[0] - RECT_W//2):
+				if(center_x < RECT_BOTTOM_RIGHT()[0] - RECT_W//2):
 					histerezis_on["right"] = False
 					drone.yaw_velocity = 0
 				else:
@@ -312,6 +325,12 @@ def save_segmented_persons(results, frame):
 				print("[SAVING...]Saving frame")
 				cv2.imwrite(save_path, person_crop_masked_bgr)
 
+def get_dynamic_rect_size(selected_id_container):
+	if(selected_id_container["id"] is None):
+		return (RECT_W, RECT_H)
+	else:
+
+		return (100, 100)
 
 def main():
 	print("START!")
@@ -362,6 +381,7 @@ def main():
 				x1, y1, x2, y2, center_x, center_y = coords
 				# Do actions using coords!
 				print(f"Center coordinates: ({center_x}, {center_y})")
+
 			histerezis_on = {
 				"down": False,
 				"up": False,
