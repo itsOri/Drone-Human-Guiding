@@ -73,8 +73,8 @@ def template_match(template_obj, image):
     template_obj = pre_proccess(template_obj, template_obj.shape[1])
     image = pre_proccess(image, template_obj.shape[1])
 
-    min_vals_rot = np.zeros(3)
-    deg_arr = [0,5,-5]
+    deg_arr = [0,2,-2,5,-5]
+    min_vals_rot = np.zeros(len(deg_arr))
     for i in range(len(deg_arr)):
         degrees = deg_arr[i]
         template_obj = rotate_template(template_obj, degrees)
@@ -93,11 +93,11 @@ for i in range(19):
     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     min_vals[i] =  template_match(template, image)
 
-image = cv2.imread(f"photos/person_id_59_capture_11.jpg", cv2.COLOR_BGR2RGB)
-image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-min_vals[19] =  template_match(template, image)
+# image = cv2.imread(f"photos/person_id_59_capture_11.jpg", cv2.COLOR_BGR2RGB)
+# image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+# min_vals[19] =  template_match(template, image)
 
-min_val_index = np.argmin(min_vals)
-np.set_printoptions(precision=2, suppress=True)
-print(f"min score: {min_vals[min_val_index]}, photo: person_id_13_capture_{min_val_index+1}")
-print(f"all scores: {np.round(min_vals, 2)}")
+# min_val_index = np.argmin(min_vals)
+# np.set_printoptions(precision=2, suppress=True)
+# print(f"min score: {min_vals[min_val_index]}, photo: person_id_13_capture_{min_val_index+1}")
+# print(f"all scores: {np.round(min_vals, 2)}")
