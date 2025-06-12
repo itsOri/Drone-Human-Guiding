@@ -77,8 +77,8 @@ def template_match(template_obj, image):
     min_vals_rot = np.zeros(len(deg_arr))
     for i in range(len(deg_arr)):
         degrees = deg_arr[i]
-        template_obj = rotate_template(template_obj, degrees)
-        min_vals_rot[i] = perform_correlation(template_obj, image)
+        rotated_template = rotate_template(template_obj, degrees)
+        min_vals_rot[i] = perform_correlation(rotated_template, image)
     
     min_val = min_vals_rot.min()
     return min_val
