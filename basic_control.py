@@ -1,6 +1,13 @@
 import cv2
 import time
 from djitellopy import Tello
+from datetime import datetime 
+
+TIMESTAMP = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+OUTPUT_FILENAME = f'tello_capture_{TIMESTAMP}.avi'
+
+
+
 
 def main():
 	drone = Tello()
@@ -97,7 +104,9 @@ def main2():
 
 	width, height = 640, 480
 	fourcc = cv2.VideoWriter_fourcc(*'MJPG')
-	out = cv2.VideoWriter('tello_capture.avi', fourcc, 20.0, (width, height))
+	timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+	out = cv2.VideoWriter(OUTPUT_FILENAME, fourcc, 20.0, (width, height))
 
 	print("[INFO] Starting video capture. Use WASD/arrows to fly, 't' to take off, 'l' to land, 'q' to quit.")
 

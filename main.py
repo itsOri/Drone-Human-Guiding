@@ -5,6 +5,10 @@ from ultralytics import YOLO
 import threading
 import numpy as np
 import os
+from datetime import datetime 
+
+TIMESTAMP = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+OUTPUT_FILENAME = f'tello_capture_{TIMESTAMP}.avi'
 
 
 WIDTH = 640
@@ -15,7 +19,7 @@ RECT_CENTER = (WIDTH // 2, HEIGHT // 2 + 50)
 RECT_W, RECT_H = 200, 200
 CONST_RECT_TOP_LEFT = (RECT_CENTER[0] - RECT_W // 2, RECT_CENTER[1] - RECT_H // 2)
 CONST_RECT_BOTTOM_RIGHT = (RECT_CENTER[0] - RECT_W // 2, RECT_CENTER[1] - RECT_H // 2)
-DYNAMIC_RECT = True
+DYNAMIC_RECT = False
 
 
 #RECT_TOP_LEFT = (RECT_CENTER[0] - RECT_W // 2, RECT_CENTER[1] - RECT_H // 2)
@@ -59,7 +63,7 @@ def start_drone():
 
 def start_recording():
 	fourcc = cv2.VideoWriter_fourcc(*'MJPG')
-	out = cv2.VideoWriter('tello_capture.avi', fourcc, 20.0, (WIDTH, HEIGHT))
+	out = cv2.VideoWriter(OUTPUT_FILENAME, fourcc, 20.0, (WIDTH, HEIGHT))
 
 	print("[INFO] Starting video capture. Press 'q' to stop.")
 	
@@ -191,7 +195,7 @@ def control_drone(drone, coords, frame, histerezis_enabled, histerezis_on):
 		return 0,0,0,0
 	
 	x1, y1, x2, y2, center_x, center_y = coords
-	RECT_W, RECT_H = min(y2-y1, x2-x1)
+	RECT_W, RECT_H = min(y2-y1, x2-x1), min(y2-y1, x2-x1)
 	# if person above rectangle, need to go forward
 	if center_y < RECT_TOP_LEFT()[1] :
 		cv2.putText(frame, "FORWARD", 
@@ -403,7 +407,8 @@ def main():
 			draw_frame_addons(annotated_frame, coords)
 
 			cv2.imshow('Tello Video Feed', annotated_frame)
-			out.write(cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
+			# out.write(cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
+			out.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
 
 
 			if should_quit():
