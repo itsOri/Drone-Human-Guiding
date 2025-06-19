@@ -17,10 +17,11 @@ selected_id = None
 
 RECT_CENTER = (WIDTH // 2, HEIGHT // 2 + 50)
 RECT_W, RECT_H = 200, 200
+MIN_RECT_SIZE = 50
 CONST_RECT_TOP_LEFT = (RECT_CENTER[0] - RECT_W // 2, RECT_CENTER[1] - RECT_H // 2)
 CONST_RECT_BOTTOM_RIGHT = (RECT_CENTER[0] - RECT_W // 2, RECT_CENTER[1] - RECT_H // 2)
-DYNAMIC_RECT = True
-
+DYNAMIC_RECT = False
+SAVE_FILE = True
 
 #RECT_TOP_LEFT = (RECT_CENTER[0] - RECT_W // 2, RECT_CENTER[1] - RECT_H // 2)
 #RECT_BOTTOM_RIGHT = (RECT_CENTER[0] + RECT_W // 2, RECT_CENTER[1] + RECT_H // 2)
@@ -63,9 +64,9 @@ def start_drone():
 
 def start_recording():
 	fourcc = cv2.VideoWriter_fourcc(*'MJPG')
-	out = cv2.VideoWriter(OUTPUT_FILENAME, fourcc, 20.0, (WIDTH, HEIGHT))
-
-	print("[INFO] Starting video capture. Press 'q' to stop.")
+	if(SAVE_FILE):
+		out = cv2.VideoWriter(OUTPUT_FILENAME, fourcc, 20.0, (WIDTH, HEIGHT))
+		print("[INFO] Starting video capture. Press 'q' to stop.")
 	
 	return out
 
@@ -195,7 +196,10 @@ def control_drone(drone, coords, frame, histerezis_enabled, histerezis_on):
 		return 0,0,0,0
 	
 	x1, y1, x2, y2, center_x, center_y = coords
-	RECT_W, RECT_H = min(y2-y1, x2-x1), min(y2-y1, x2-x1)
+	min_object_size = max(MIN_RECT_SIZE, min(y2-y1, x2-x1))
+	RECT_W, RECT_H = min_object_size, min_object_size
+	print(RECT_W, RECT_H)
+
 	# if person above rectangle, need to go forward
 	if center_y < RECT_TOP_LEFT()[1] :
 		cv2.putText(frame, "FORWARD", 
@@ -205,7 +209,7 @@ def control_drone(drone, coords, frame, histerezis_enabled, histerezis_on):
 		if histerezis_enabled: histerezis_on["up"] = True
 
 	# if person below rectangle, need to go backward
-	elif center_y > RECT_BOTTOM_RIGHT[1] :
+	elif center_y > RECT_BOTTOM_RIGHT()[1] :
 		cv2.putText(frame, "BACKWARD", 
 					(RECT_TOP_LEFT()[0] + 20, RECT_TOP_LEFT()[1] - 20), 
 					cv2.FONT_HERSHEY_SIMPLEX, 1, BLACK, 2)
@@ -427,4 +431,4 @@ def main():
 
 
 if __name__ == '__main__':
-	main()
+	main()			
