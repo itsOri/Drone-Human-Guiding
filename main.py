@@ -17,10 +17,10 @@ HEIGHT = 480
 selected_id = None
 
 RECT_CENTER = (WIDTH // 2, HEIGHT // 2 + 50)
-RECT_W, RECT_H = 200, 200
+rect_size = {"w": 200, "h": 200}
 MIN_RECT_SIZE = 50
-CONST_RECT_TOP_LEFT = (RECT_CENTER[0] - RECT_W // 2, RECT_CENTER[1] - RECT_H // 2)
-CONST_RECT_BOTTOM_RIGHT = (RECT_CENTER[0] - RECT_W // 2, RECT_CENTER[1] - RECT_H // 2)
+CONST_RECT_TOP_LEFT = (RECT_CENTER[0] - rect_size['w'] // 2, RECT_CENTER[1] - rect_size['h'] // 2)
+CONST_RECT_BOTTOM_RIGHT = (RECT_CENTER[0] - rect_size['w'] // 2, RECT_CENTER[1] - rect_size['h'] // 2)
 DYNAMIC_RECT = False
 SAVE_FILE = True
 
@@ -35,12 +35,12 @@ FB_MOVING_VELOCITY = 10
 def RECT_TOP_LEFT():
 	if(DYNAMIC_RECT is False): 
 		return CONST_RECT_TOP_LEFT
-	return (RECT_CENTER[0] - RECT_W // 2, RECT_CENTER[1] - RECT_H // 2)
+	return (RECT_CENTER[0] - rect_size['w'] // 2, RECT_CENTER[1] - rect_size['h'] // 2)
 
 def RECT_BOTTOM_RIGHT():
 	if(DYNAMIC_RECT is False): 
 		return CONST_RECT_BOTTOM_RIGHT
-	return (RECT_CENTER[0] + RECT_W // 2, RECT_CENTER[1] + RECT_H // 2)
+	return (RECT_CENTER[0] + rect_size['w'] // 2, RECT_CENTER[1] + rect_size['h'] // 2)
 
 def start_drone():
 	drone = Tello()
@@ -199,8 +199,8 @@ def control_drone(drone, coords, frame, histerezis_enabled, histerezis_on):
 	
 	x1, y1, x2, y2, center_x, center_y = coords
 	min_object_size = max(MIN_RECT_SIZE, min(y2-y1, x2-x1))
-	RECT_W, RECT_H = min_object_size, min_object_size
-	print(RECT_W, RECT_H)
+	rect_size['w'], rect_size['h'] = min_object_size, min_object_size
+	print(rect_size['w'], rect_size['h'])
 
 	# if person above rectangle, need to go forward
 	if center_y < RECT_TOP_LEFT()[1] :
@@ -222,13 +222,13 @@ def control_drone(drone, coords, frame, histerezis_enabled, histerezis_on):
 		if histerezis_enabled:
 			#y-axis histerezis effects
 			if(histerezis_on["up"]):
-				if(center_y > RECT_TOP_LEFT()[1] + RECT_H//2):
+				if(center_y > RECT_TOP_LEFT()[1] + rect_size['h']//2):
 					histerezis_on["up"] = False
 					drone.for_back_velocity = 0
 				else:
 					drone.for_back_velocity = FB_MOVING_VELOCITY
 			elif(histerezis_on["down"]):
-				if(center_y < RECT_BOTTOM_RIGHT()[1] - RECT_H//2):
+				if(center_y < RECT_BOTTOM_RIGHT()[1] - rect_size['h']//2):
 					histerezis_on["down"] = False
 					drone.for_back_velocity = 0
 				else:
@@ -255,13 +255,13 @@ def control_drone(drone, coords, frame, histerezis_enabled, histerezis_on):
 			
 			#x-axis histerezis effects
 			if(histerezis_on["left"]):
-				if(center_x > RECT_TOP_LEFT()[0] + RECT_W//2):
+				if(center_x > RECT_TOP_LEFT()[0] + rect_size['w']//2):
 					histerezis_on["left"] = False
 					drone.yaw_velocity = 0
 				else:
 					drone.yaw_velocity = -YAW_MOVING_VELOCITY
 			elif(histerezis_on["right"]):
-				if(center_x < RECT_BOTTOM_RIGHT()[0] - RECT_W//2):
+				if(center_x < RECT_BOTTOM_RIGHT()[0] - rect_size['w']//2):
 					histerezis_on["right"] = False
 					drone.yaw_velocity = 0
 				else:
@@ -334,13 +334,6 @@ def save_segmented_persons(results, frame):
 				person_crop_masked_bgr = cv2.cvtColor(person_crop_masked, cv2.COLOR_RGB2BGR)
 				print("[SAVING...]Saving frame")
 				cv2.imwrite(save_path, person_crop_masked_bgr)
-
-def get_dynamic_rect_size(selected_id_container):
-	if(selected_id_container["id"] is None):
-		return (RECT_W, RECT_H)
-	else:
-
-		return (100, 100)
 
 def main():
 	print("START!")
