@@ -8,7 +8,8 @@ import os
 from datetime import datetime 
 
 TIMESTAMP = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-OUTPUT_FILENAME = f'tello_capture_{TIMESTAMP}.avi'
+OUTPUT_FILENAME = f'clean_video_{TIMESTAMP}.avi'
+OUTPUT_ANNOTATED_FILENAME = f'annotated_video_{TIMESTAMP}.avi'
 
 
 WIDTH = 640
@@ -62,10 +63,10 @@ def start_drone():
 	return drone
 
 
-def start_recording():
+def start_recording(filename):
 	fourcc = cv2.VideoWriter_fourcc(*'MJPG')
 	if(SAVE_FILE):
-		out = cv2.VideoWriter(OUTPUT_FILENAME, fourcc, 20.0, (WIDTH, HEIGHT))
+		out = cv2.VideoWriter(filename, fourcc, 20.0, (WIDTH, HEIGHT))
 		print("[INFO] Starting video capture. Press 'q' to stop.")
 	
 	return out
@@ -89,10 +90,11 @@ def should_quit():
 
 	return cv2.waitKey(1) & 0xFF == ord('q')
 
-
-def exit(out, drone):
+# outs: lists of outputs to release
+def exit(outs, drone):
 	print("[INFO] Stopping capture, releasing resources.")
-	out.release()
+	for out in outs:
+		out.release()
 	cv2.destroyAllWindows()
 	drone.streamoff()
 
@@ -351,7 +353,11 @@ def main():
 	model = YOLO("./yolo_models/yolo11s-seg.pt")
 
 	drone = start_drone()
-	out = start_recording()
+	out_clean = start_recording(OUTPUT_FILENAME)
+	out_annotated = start_recording(OUTPUT_ANNOTATED_FILENAME)
+
+
+
 	launch_drone(drone)
 
 
@@ -411,8 +417,8 @@ def main():
 			draw_frame_addons(annotated_frame, coords)
 
 			cv2.imshow('Tello Video Feed', annotated_frame)
-			# out.write(cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
-			out.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+			out_annotated.write(cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
+			out_clean.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
 
 
 			if should_quit():
@@ -425,7 +431,7 @@ def main():
 		print("[INFO] Interrupted by user.")
 
 
-	exit(out, drone)
+	exit([out_clean, out_annotated], drone)
 
 	return
 
