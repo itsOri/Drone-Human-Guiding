@@ -20,9 +20,10 @@ RECT_CENTER = (WIDTH // 2, HEIGHT // 2 + 50)
 rect_size = {"w": 200, "h": 200}
 MIN_RECT_SIZE = 50
 CONST_RECT_TOP_LEFT = (RECT_CENTER[0] - rect_size['w'] // 2, RECT_CENTER[1] - rect_size['h'] // 2)
-CONST_RECT_BOTTOM_RIGHT = (RECT_CENTER[0] - rect_size['w'] // 2, RECT_CENTER[1] - rect_size['h'] // 2)
-DYNAMIC_RECT = False
+CONST_RECT_BOTTOM_RIGHT = (RECT_CENTER[0] + rect_size['w'] // 2, RECT_CENTER[1] + rect_size['h'] // 2)
+DYNAMIC_RECT = True
 SAVE_FILE = True
+HISTEREZIS_ENABLED = False # TODO!!, its doing a ping pong between both sides and not turning off
 
 #RECT_TOP_LEFT = (RECT_CENTER[0] - RECT_W // 2, RECT_CENTER[1] - RECT_H // 2)
 #RECT_BOTTOM_RIGHT = (RECT_CENTER[0] + RECT_W // 2, RECT_CENTER[1] + RECT_H // 2)
@@ -112,7 +113,19 @@ def shutdown_drone(drone):
 # def get_id(result):
 # 	return
 	
+def target_thread(target_id_container):
 
+	target_input = input("[INPUT] Enter Target ID: ")
+	try:
+		target_id_container["id"] = int(target_input)
+		print(f"[INFO] Target ID: {target_id_container['id']}")
+
+	except ValueError:
+		print("[WARN] Invalid ID entered.")
+		target_id_container["id"] = None
+	
+
+# TODO unite this func with target thread using generic container or string param for text display to user
 def input_thread(selected_id_container):
 	user_input = input("[INPUT] Enter ID to select: ")
 	try:
@@ -124,11 +137,12 @@ def input_thread(selected_id_container):
 		selected_id_container["id"] = None
 
 
-def init_id_getter_thread(selected_id_container):
+# TODO check its generic func
+def init_id_getter_thread(container):
 	"""
 	Initializes and starts a background thread to continuously get user input.
 	"""
-	thread = threading.Thread(target=input_thread, args=(selected_id_container,))
+	thread = threading.Thread(target=input_thread, args=(container,))
 	thread.daemon = True
 	thread.start()
 	return thread
@@ -381,7 +395,10 @@ def main():
 				getter_thread = init_id_getter_thread(selected_id_container)
 
 			if(selected_id_container["id"]):
-				is_id_found = find_id_in_frame(results, selected_id_container)
+				# is_id_found = find_id_in_frame(results, selected_id_container)
+				# TODO: pivot to new function that will take care of scanning the potential target objects
+				pass
+
 
 			coords = selected_id_container.get("coords")
 			if coords:
@@ -395,7 +412,7 @@ def main():
 				"left": False,
 				"right": False
 			}
-			drone.left_right_velocity, drone.for_back_velocity, drone.up_down_velocity, drone.yaw_velocity = control_drone(drone, coords, annotated_frame, True, histerezis_on)
+			drone.left_right_velocity, drone.for_back_velocity, drone.up_down_velocity, drone.yaw_velocity = control_drone(drone, coords, annotated_frame, HISTEREZIS_ENABLED, histerezis_on)
 			
 			# keep alive command
 			drone.send_control_command("command")
