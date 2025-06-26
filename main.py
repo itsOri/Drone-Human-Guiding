@@ -6,6 +6,8 @@ import threading
 import numpy as np
 import os
 from datetime import datetime 
+from tests import template_matching
+
 
 TIMESTAMP = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 OUTPUT_FILENAME = f'clean_video_{TIMESTAMP}.avi'
@@ -388,6 +390,7 @@ def save_segmented_persons(results, frame):
 				cv2.imwrite(save_path, person_crop_masked_bgr)
 
 def find_new_id(selected_id_container):
+
 	pass
 
 def main():
