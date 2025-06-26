@@ -17,11 +17,11 @@ HEIGHT = 480
 selected_id = None
 
 RECT_CENTER = (WIDTH // 2, HEIGHT // 2 + 50)
-rect_size = {"w": 200, "h": 200}
+rect_size = {"w": 100, "h": 100}
 MIN_RECT_SIZE = 50
 CONST_RECT_TOP_LEFT = (RECT_CENTER[0] - rect_size['w'] // 2, RECT_CENTER[1] - rect_size['h'] // 2)
 CONST_RECT_BOTTOM_RIGHT = (RECT_CENTER[0] + rect_size['w'] // 2, RECT_CENTER[1] + rect_size['h'] // 2)
-DYNAMIC_RECT = True
+DYNAMIC_RECT = False
 SAVE_FILE = True
 HISTEREZIS_ENABLED = False # TODO!!, its doing a ping pong between both sides and not turning off
 
@@ -30,8 +30,9 @@ HISTEREZIS_ENABLED = False # TODO!!, its doing a ping pong between both sides an
 
 BLACK = (0, 0, 0)
 
-YAW_MOVING_VELOCITY = 10
-FB_MOVING_VELOCITY = 10
+YAW_MOVING_VELOCITY = 15
+FB_MOVING_VELOCITY = 25
+DRONE_START_HEIGHT = 200
 
 def RECT_TOP_LEFT():
 	if(DYNAMIC_RECT is False): 
@@ -98,12 +99,13 @@ def exit(outs, drone):
 		out.release()
 	cv2.destroyAllWindows()
 	drone.streamoff()
+	print(f"Battery: {drone.get_battery()}%")
 
 
 def launch_drone(drone):
 	# do takeoff
 	drone.takeoff()
-	drone.move_up(60)
+	drone.move_up(DRONE_START_HEIGHT) # starting height
 	return
 
 def shutdown_drone(drone):
@@ -395,10 +397,11 @@ def main():
 				getter_thread = init_id_getter_thread(selected_id_container)
 
 			if(selected_id_container["id"]):
-				# is_id_found = find_id_in_frame(results, selected_id_container)
+				# saves the coordinates in container IMPORTANT DONT COMMENT
+				is_id_found = find_id_in_frame(results, selected_id_container)
 				# TODO: pivot to new function that will take care of scanning the potential target objects
 				pass
-
+			print(f"[SELECTED ID] {selected_id_container['id']}")
 
 			coords = selected_id_container.get("coords")
 			if coords:
