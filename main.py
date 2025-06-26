@@ -130,13 +130,13 @@ def target_thread(target_id_container):
 def input_thread(selected_id_container):
 	user_input = input("[INPUT] Enter ID to select: ")
 	try:
-		selected_id_container["id"] = int(user_input)
+		selected_id_container["id"].append(int(user_input))
 		selected_id_container["id_was_seen"] = False
 		print(f"[INFO] Selected ID: {selected_id_container['id']}")
 
 	except ValueError:
 		print("[WARN] Invalid ID entered.")
-		selected_id_container["id"] = None
+		selected_id_container["id"] = []
 
 
 # TODO check its generic func
@@ -169,6 +169,40 @@ def get_coordinates_by_id(results, target_id):
 				return (x1, y1, x2, y2, center_x, center_y)
 	return None
 
+def get_ids_in_frame(results):
+    """
+    Extracts class IDs from YOLOv8 inference results.
+
+    Parameters:
+        results: YOLOv8 result object (from model.predict or model(...))
+
+    Returns:
+        List of integer class IDs detected in the frame.
+    """
+    if len(results) == 0 or results[0].boxes is None:
+        return []
+
+    class_ids = results[0].boxes.cls.cpu().numpy().astype(int).tolist()
+    return class_ids
+
+
+def get_target_id_in_frame(results, target_ids):
+	"""
+    Returns the first target ID found in the frame that is in target_ids list
+
+    Parameters:
+        results: Detection results for the current frame.
+        target_ids (list): IDs to search for.
+
+    Returns:
+        int or None: Matching target ID or None if not found.
+    """
+	ids_in_frame = get_ids_in_frame(results)
+	for id in ids_in_frame:
+		if( id.isin(target_ids)):
+			return id
+	print("Error - target id not in frame")
+	return None
 
 def find_id_in_frame(results, selected_id_container):
 	"""
@@ -178,7 +212,7 @@ def find_id_in_frame(results, selected_id_container):
 	Returns updated (id_selected).
 	"""
 	if selected_id_container["id"]:
-		target_id = selected_id_container["id"]
+		target_id = get_target_id_in_frame(results, selected_id_container["id"])
 		coords = get_coordinates_by_id(results, target_id)
 		selected_id_container["coords"] = coords  # Store or update the coordinates
 		if coords:
@@ -188,7 +222,7 @@ def find_id_in_frame(results, selected_id_container):
 			return True
 		else:
 			print(f"[WARN] Frame: ID {target_id} not found in this frame.")
-			selected_id_container["id"] = None
+			selected_id_container["id"] = []
 			print("[INPUT] Please enter a new ID to select.")
 			return False
 		
@@ -358,9 +392,9 @@ def main():
 	print("START!")
 
 	# thread for id selection 
-	selected_id_container = {"id": None}
+	selected_id_container = {"id": []}
 	getter_thread = None
-	id_selected = selected_id_container["id"] == None
+	id_selected = selected_id_container["id"]
 
 	model = YOLO("./yolo_models/yolo11s-seg.pt")
 
@@ -396,7 +430,7 @@ def main():
 			annotated_frame = results[0].plot() # this is the frame with boxes and ids after track()
 
 
-			if((selected_id_container["id"] is None) and not is_alive(getter_thread)):
+			if((not selected_id_container["id"]) and not is_alive(getter_thread)):
 				getter_thread = init_id_getter_thread(selected_id_container)
 
 			if(selected_id_container["id"]):
