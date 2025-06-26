@@ -16,7 +16,7 @@ THRESHOLD_BEST_MATCH = 2000
 # --- MAIN DATA STORE ---
 # This dictionary will hold the image histories for ALL detected persons.
 # Keys are person IDs, values are lists of images.
-person_dict = {}
+persons_dict = {}
 
 # (extract_person_from_frame function can be removed if not used elsewhere, but we'll keep it for now)
 def extract_person_from_frame(results, target_id, original_frame, frame_number):
@@ -61,29 +61,29 @@ def extract_all_visible_persons(results, original_frame):
 	return extracted_persons_dict
 
 
-def update_person_dict(all_persons_in_frame, person_dict, max_extractions):
+def update_persons_dict(all_persons_in_frame, persons_dict, max_extractions):
 	"""
 	Updates the main dictionary with new extractions for each person.
 	"""
 	for person_id, image in all_persons_in_frame.items():
-		if person_id not in person_dict:
-			person_dict[person_id] = []
-		person_dict[person_id].append(image)
-		if len(person_dict[person_id]) > max_extractions:
-			person_dict[person_id].pop(0)
+		if person_id not in persons_dict:
+			persons_dict[person_id] = []
+		persons_dict[person_id].append(image)
+		if len(persons_dict[person_id]) > max_extractions:
+			persons_dict[person_id].pop(0)
 
 
-def save_all_persons(person_dict, base_output_folder):
+def save_all_persons(persons_dict, base_output_folder):
 	"""
-	Saves all collected images from the person_dict to disk, organized
+	Saves all collected images from the persons_dict to disk, organized
 	in sub-folders by person ID.
 	"""
-	if not person_dict:
+	if not persons_dict:
 		print("[INFO] Person dictionary is empty. Nothing to save.")
 		return
 	print(f"\n[INFO] Saving all collected person images to '{base_output_folder}'...")
 	os.makedirs(base_output_folder, exist_ok=True)
-	for person_id, image_list in person_dict.items():
+	for person_id, image_list in persons_dict.items():
 		person_folder = os.path.join(base_output_folder, f"person_{person_id}")
 		os.makedirs(person_folder, exist_ok=True)
 		print(f"  > Saving {len(image_list)} images for Person ID {person_id}...")
@@ -146,13 +146,13 @@ def display_video_frame_by_frame():
 			
 			# 2. Update our main data store with these new images.
 			if all_persons_in_frame:
-				update_person_dict(all_persons_in_frame, person_dict, MAX_RECENT_EXTRACTIONS)
+				update_persons_dict(all_persons_in_frame, persons_dict, MAX_RECENT_EXTRACTIONS)
 
 			# --- RE-IDENTIFICATION LOGIC (Optional, runs alongside data collection) ---
 			# Check if our specifically tracked person is lost.
 			if selected_id_to_track not in all_persons_in_frame.keys():
 				# Get the known templates for our lost person from the main dictionary
-				templates = person_dict.get(selected_id_to_track, [])
+				templates = persons_dict.get(selected_id_to_track, [])
 				
 				# Only search if we have templates and there are other people to check
 				if templates and all_persons_in_frame:
@@ -179,7 +179,7 @@ def display_video_frame_by_frame():
 		video.release()
 		cv2.destroyAllWindows()
 		# Use the new save function to save everything.
-		save_all_persons(person_dict, PERSON_OUTPUT_FOLDER)
+		save_all_persons(persons_dict, PERSON_OUTPUT_FOLDER)
 
 
 if __name__ == "__main__":

@@ -35,6 +35,8 @@ BLACK = (0, 0, 0)
 YAW_MOVING_VELOCITY = 15
 FB_MOVING_VELOCITY = 25
 DRONE_START_HEIGHT = 200
+MAX_LOST_ID_FRAMES = 20
+
 
 def RECT_TOP_LEFT():
 	if(DYNAMIC_RECT is False): 
@@ -133,6 +135,7 @@ def input_thread(selected_id_container):
 	user_input = input("[INPUT] Enter ID to select: ")
 	try:
 		selected_id_container["id"].append(int(user_input))
+		selected_id_container["lost_counter"] = 0
 		selected_id_container["id_was_seen"] = False
 		print(f"[INFO] Selected ID: {selected_id_container['id']}")
 
@@ -206,29 +209,42 @@ def get_target_id_in_frame(results, target_ids):
 	print("Error - target id not in frame")
 	return None
 
-def find_id_in_frame(results, selected_id_container):
+def find_id_in_frame(results, selected_id_container, persons_dict, all_persons_in_frame):
 	"""
 	Checks if an ID is selected and processes tracking results to get coordinates.
 	Stores the coordinates in selected_id_container["coords"] if found.
 	If the ID is not found, resets selection and input thread status.
 	Returns updated (id_selected).
 	"""
-	if selected_id_container["id"]:
-		target_id = get_target_id_in_frame(results, selected_id_container["id"])
-		selected_id_container["followed_id"] = target_id
-		coords = get_coordinates_by_id(results, target_id)
+	is_id_found = False
+	
+	target_id = get_target_id_in_frame(results, selected_id_container["id"])
+	if not target_id and selected_id_container["id_was_seen"]:
+		target_id = find_new_id(persons_dict, selected_id_container, all_persons_in_frame)
+
+	selected_id_container["followed_id"] = target_id
+	coords = get_coordinates_by_id(results, target_id)
+	
+	if coords:
 		selected_id_container["coords"] = coords  # Store or update the coordinates
-		if coords:
-			x1, y1, x2, y2, center_x, center_y = coords
-			print(f"[INFO] Frame: Found ID {target_id} at ({x1}, {y1}), ({x2}, {y2}), center: ({center_x}, {center_y})")
-			# You can add more logic here (e.g., draw something special or send commands)
-			return True
-		else:
-			print(f"[WARN] Frame: ID {target_id} not found in this frame.")
-			selected_id_container["id"] = []
-			selected_id_container["followed_id"] = None
-			print("[INPUT] Please enter a new ID to select.")
-			return False
+		x1, y1, x2, y2, center_x, center_y = coords
+		print(f"[INFO] Frame: Found ID {target_id} at ({x1}, {y1}), ({x2}, {y2}), center: ({center_x}, {center_y})")
+		# You can add more logic here (e.g., draw something special or send commands)
+		is_id_found = True
+		selected_id_container["id_was_seen"] = True
+		selected_id_container["lost_counter"] = 0
+	elif selected_id_container["id_was_seen"] and selected_id_container["lost_counter"] < MAX_LOST_ID_FRAMES:
+		selected_id_container["lost_counter"] += 1
+		is_id_found = True
+	else:
+		print(f"[WARN] Frame: ID {target_id} not found in this frame.")
+		selected_id_container["id"] = []
+		selected_id_container["followed_id"] = None
+		print("[INPUT] Please enter a new ID to select.")
+		is_id_found = False
+	
+
+	return is_id_found
 		
 
 def is_alive(thread):
@@ -389,18 +405,29 @@ def save_segmented_persons(results, frame):
 				print("[SAVING...]Saving frame")
 				cv2.imwrite(save_path, person_crop_masked_bgr)
 
-def find_new_id(selected_id_container):
+def find_new_id(persons_dict, selected_id_container, all_persons_in_frame):
+	selected_id_to_track = selected_id_container["followed_id"]
+	templates = persons_dict.get(selected_id_to_track, [])
+	replacement_id = -1
+	if templates and all_persons_in_frame:
+		print(f"[WARN] Target ID {selected_id_to_track} lost. Attempting to re-acquire...")
+		replacement_id = template_matching.find_best_match(all_persons_in_frame, templates)
+		if replacement_id != -1:
+			print(f"[SUCCESS] Re-acquired target! Old ID: {selected_id_to_track}, New ID: {replacement_id}")
+			selected_id_container["followed_id"] = replacement_id
+			selected_id_container["id"].append(replacement_id)
+			return replacement_id
+	return None
 
-	pass
 
 def main():
 	print("START!")
 
 	# thread for id selection 
-	selected_id_container = {"id": []}
+	selected_id_container = {"id": [],}
 	getter_thread = None
 	# id_selected = selected_id_container["id"]
-
+	persons_dict = {}
 	model = YOLO("./yolo_models/yolo11s-seg.pt")
 
 	drone = start_drone()
@@ -423,19 +450,26 @@ def main():
 			# if(selected_id_container["id"]): save_segmented_persons(results, frame)
 			annotated_frame = results[0].plot() # this is the frame with boxes and ids after track()
 
+			# 1. Extract all persons visible in the current frame.
+			all_persons_in_frame = template_matching.extract_all_visible_persons(results, frame)
+
+			# 2. Update our main data store with these new images.
+			if all_persons_in_frame:
+				template_matching.update_persons_dict(all_persons_in_frame, persons_dict, template_matching.MAX_RECENT_EXTRACTIONS)
+
 
 			if((not selected_id_container["id"]) and not is_alive(getter_thread)):
 				getter_thread = init_id_getter_thread(selected_id_container)
 
 			if(selected_id_container["id"]):
 				# saves the coordinates in container IMPORTANT DONT COMMENT
-				is_id_found = find_id_in_frame(results, selected_id_container)
+				is_id_found = find_id_in_frame(results, selected_id_container, persons_dict, all_persons_in_frame)
 				# TODO: pivot to new function that will take care of scanning the potential target objects
-				if not is_id_found and selected_id_container["id_was_seen"]:
-					is_id_found = find_new_id(selected_id_container)
-				#first time found the id in frame
-				elif is_id_found and not selected_id_container["id_was_seen"]:
-					selected_id_container["id_was_seen"] = True
+				# if not is_id_found and selected_id_container["id_was_seen"]:
+				# 	is_id_found = find_new_id(persons_dict, selected_id_container, all_persons_in_frame)
+				# #first time found the id in frame
+				# elif is_id_found and not selected_id_container["id_was_seen"]:
+				# 	selected_id_container["id_was_seen"] = True
 
 
 			print(f"[SELECTED ID] {selected_id_container['id']}")
