@@ -213,6 +213,7 @@ def find_id_in_frame(results, selected_id_container):
 	"""
 	if selected_id_container["id"]:
 		target_id = get_target_id_in_frame(results, selected_id_container["id"])
+		selected_id_container["followed_id"] = target_id
 		coords = get_coordinates_by_id(results, target_id)
 		selected_id_container["coords"] = coords  # Store or update the coordinates
 		if coords:
@@ -223,6 +224,7 @@ def find_id_in_frame(results, selected_id_container):
 		else:
 			print(f"[WARN] Frame: ID {target_id} not found in this frame.")
 			selected_id_container["id"] = []
+			selected_id_container["followed_id"] = None
 			print("[INPUT] Please enter a new ID to select.")
 			return False
 		
@@ -394,7 +396,7 @@ def main():
 	# thread for id selection 
 	selected_id_container = {"id": []}
 	getter_thread = None
-	id_selected = selected_id_container["id"]
+	# id_selected = selected_id_container["id"]
 
 	model = YOLO("./yolo_models/yolo11s-seg.pt")
 
@@ -405,17 +407,6 @@ def main():
 
 
 	launch_drone(drone)
-
-
-
-
-	# print("[TEST][TEST][TEST][TEST][TEST] Rotating left 10 units")
-	# drone.yaw_velocity = 180
-	# drone.send_rc_control(0, 0, 0, drone.yaw_velocity)
-	# time.sleep(4)
-	# print("after rotation")
-	# drone.yaw_velocity = -180
-	# drone.send_rc_control(0, 0, 0, drone.yaw_velocity)
 
 
 	try:
