@@ -116,7 +116,6 @@ def shutdown_drone(drone):
 # 	return
 	
 def target_thread(target_id_container):
-
 	target_input = input("[INPUT] Enter Target ID: ")
 	try:
 		target_id_container["id"] = int(target_input)
@@ -132,6 +131,7 @@ def input_thread(selected_id_container):
 	user_input = input("[INPUT] Enter ID to select: ")
 	try:
 		selected_id_container["id"] = int(user_input)
+		selected_id_container["id_was_seen"] = False
 		print(f"[INFO] Selected ID: {selected_id_container['id']}")
 
 	except ValueError:
@@ -351,6 +351,9 @@ def save_segmented_persons(results, frame):
 				print("[SAVING...]Saving frame")
 				cv2.imwrite(save_path, person_crop_masked_bgr)
 
+def find_new_id(selected_id_container):
+	pass
+
 def main():
 	print("START!")
 
@@ -400,7 +403,13 @@ def main():
 				# saves the coordinates in container IMPORTANT DONT COMMENT
 				is_id_found = find_id_in_frame(results, selected_id_container)
 				# TODO: pivot to new function that will take care of scanning the potential target objects
-				pass
+				if not is_id_found and selected_id_container["id_was_seen"]:
+					is_id_found = find_new_id(selected_id_container)
+				#first time found the id in frame
+				elif is_id_found and not selected_id_container["id_was_seen"]:
+					selected_id_container["id_was_seen"] = True
+
+
 			print(f"[SELECTED ID] {selected_id_container['id']}")
 
 			coords = selected_id_container.get("coords")
