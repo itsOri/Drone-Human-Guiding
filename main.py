@@ -162,6 +162,7 @@ def get_coordinates_by_id(results, target_id):
     returns the bounding box coordinates for that ID as (x1, y1, x2, y2, center_x, center_y).
     If not found, returns None.
     """
+    if(not target_id): return None
     for box in results[0].boxes:
         # box.id is a tensor, so convert to int if necessary
         if hasattr(box, 'id') and box.id is not None:
@@ -434,14 +435,24 @@ def get_coords(container):
 
     return coords
 
+def init_input_thread(selected_id_container):
+    if((not selected_id_container["id"]) and not is_alive(user_getter_thread)):
+        user_getter_thread = init_id_getter_thread(selected_id_container)
+
 def main():
     print("START!")
 
     # thread for id selection 
     selected_id_container = {"id": [], "history": []}
-    getter_thread = None
-    # id_selected = selected_id_container["id"]
+    selected_target_container = {"id": [], "history": []}
+
     persons_dict = {}
+    model = YOLO("./yolo_models/yolo11s-seg.pt")
+    
+    # thread for id selection 
+    user_getter_thread = None
+    target_getter_thread = None
+
     model = YOLO("./yolo_models/yolo11s-seg.pt")
 
     drone = start_drone()
@@ -456,7 +467,6 @@ def main():
         "left": False,
         "right": False
     }
-
     try:
         while True:
             frame = get_frame(drone)
@@ -475,25 +485,28 @@ def main():
             if all_persons_in_frame:
                 template_matching.update_persons_dict(all_persons_in_frame, persons_dict, template_matching.MAX_RECENT_EXTRACTIONS)
 
-
-            if((not selected_id_container["id"]) and not is_alive(getter_thread)):
-                getter_thread = init_id_getter_thread(selected_id_container)
+            init_input_thread(selected_id_container)
 
             if(selected_id_container["id"]):
+                init_input_thread(selected_target_container)
                 # saves the coordinates in container IMPORTANT DONT COMMENT
-                is_id_found = find_id_in_frame(results, selected_id_container, persons_dict, all_persons_in_frame)
+                is_id_found = find_id_in_frame(results, selected_id_container)
                 # TODO: pivot to new function that will take care of scanning the potential target objects
-                # if not is_id_found and selected_id_container["id_was_seen"]:
-                # 	is_id_found = find_new_id(persons_dict, selected_id_container, all_persons_in_frame)
-                # #first time found the id in frame
-                # elif is_id_found and not selected_id_container["id_was_seen"]:
-                # 	selected_id_container["id_was_seen"] = True
 
+                #follow target
+                is_target_found = find_id_in_frame(results, selected_target_container)
 
-            print(f"[SELECTED ID] {selected_id_container['id']}")
+            print(f"[Selected ID] {selected_id_container['id']}")
+            print(f"[Target ID] {selected_target_container['id']}")
+            
+            if(is_target_found):
+                target_coords = get_coords(selected_target_container)
+                x1, y1, x2, y2, target_center_x, target_center_y = target_coords
+                print(f"Target Center coordinates: ({target_center_x}, {target_center_y})")
+            #TODO - add path finding between user and 
 
             coords = get_coords(selected_id_container)
-            
+
             drone.left_right_velocity, drone.for_back_velocity, drone.up_down_velocity, drone.yaw_velocity = control_drone(drone, coords, annotated_frame, HISTEREZIS_ENABLED, histerezis_on)
             
             # keep alive command
