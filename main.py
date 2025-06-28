@@ -157,6 +157,7 @@ def get_coordinates_by_id(results, target_id):
 	returns the bounding box coordinates for that ID as (x1, y1, x2, y2, center_x, center_y).
 	If not found, returns None.
 	"""
+	if(not target_id): return None
 	for box in results[0].boxes:
 		# box.id is a tensor, so convert to int if necessary
 		if hasattr(box, 'id') and box.id is not None:
@@ -390,27 +391,28 @@ def save_segmented_persons(results, frame):
 				cv2.imwrite(save_path, person_crop_masked_bgr)
 
 def find_new_id(selected_id_container):
-
 	pass
+
+def init_input_thread(selected_id_container):
+	if((not selected_id_container["id"]) and not is_alive(user_getter_thread)):
+		user_getter_thread = init_id_getter_thread(selected_id_container)
 
 def main():
 	print("START!")
 
-	# thread for id selection 
 	selected_id_container = {"id": []}
-	getter_thread = None
-	# id_selected = selected_id_container["id"]
+	selected_target_container = {"id": []}
+	
+	# thread for id selection 
+	user_getter_thread = None
+	target_getter_thread = None
 
 	model = YOLO("./yolo_models/yolo11s-seg.pt")
 
 	drone = start_drone()
 	out_clean = start_recording(OUTPUT_FILENAME)
 	out_annotated = start_recording(OUTPUT_ANNOTATED_FILENAME)
-
-
-
 	launch_drone(drone)
-
 
 	try:
 		while True:
@@ -422,29 +424,37 @@ def main():
 			results = model.track(frame, persist=True, verbose=False, tracker="bytetrack.yaml", classes=[0])
 			# if(selected_id_container["id"]): save_segmented_persons(results, frame)
 			annotated_frame = results[0].plot() # this is the frame with boxes and ids after track()
-
-
-			if((not selected_id_container["id"]) and not is_alive(getter_thread)):
-				getter_thread = init_id_getter_thread(selected_id_container)
+			
+			init_input_thread(selected_id_container)
 
 			if(selected_id_container["id"]):
+				init_input_thread(selected_target_container)
 				# saves the coordinates in container IMPORTANT DONT COMMENT
 				is_id_found = find_id_in_frame(results, selected_id_container)
-				# TODO: pivot to new function that will take care of scanning the potential target objects
+
 				if not is_id_found and selected_id_container["id_was_seen"]:
 					is_id_found = find_new_id(selected_id_container)
-				#first time found the id in frame
 				elif is_id_found and not selected_id_container["id_was_seen"]:
+					#first time found the id in frame
 					selected_id_container["id_was_seen"] = True
+				
+				#follow target
+				is_target_found = find_id_in_frame(results, selected_target_container)
 
-
-			print(f"[SELECTED ID] {selected_id_container['id']}")
+			print(f"[Selected ID] {selected_id_container['id']}")
+			print(f"[Target ID] {selected_target_container['id']}")
+			
+			if(is_target_found):
+				coords = selected_target_container.get("coords")
+				x1, y1, x2, y2, center_x, center_y = coords
+				print(f"Target Center coordinates: ({center_x}, {center_y})")
+			#TODO - add path finding between user and 
 
 			coords = selected_id_container.get("coords")
 			if coords:
 				x1, y1, x2, y2, center_x, center_y = coords
 				# Do actions using coords!
-				print(f"Center coordinates: ({center_x}, {center_y})")
+				print(f"User Center coordinates: ({center_x}, {center_y})")
 
 			histerezis_on = {
 				"down": False,
