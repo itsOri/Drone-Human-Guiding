@@ -503,7 +503,7 @@ def main():
                 target_coords = get_coords(selected_target_container)
                 x1, y1, x2, y2, target_center_x, target_center_y = target_coords
                 print(f"Target Center coordinates: ({target_center_x}, {target_center_y})")
-            #TODO - add path finding between user and 
+            #TODO - add path finding between user and target
 
             coords = get_coords(selected_id_container)
 
