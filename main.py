@@ -414,6 +414,13 @@ def main():
 	out_annotated = start_recording(OUTPUT_ANNOTATED_FILENAME)
 	launch_drone(drone)
 
+	histerezis_on = {
+	"down": False,
+	"up": False,
+	"left": False,
+	"right": False
+	}
+	
 	try:
 		while True:
 			frame = get_frame(drone)
@@ -456,12 +463,7 @@ def main():
 				# Do actions using coords!
 				print(f"User Center coordinates: ({center_x}, {center_y})")
 
-			histerezis_on = {
-				"down": False,
-				"up": False,
-				"left": False,
-				"right": False
-			}
+
 			drone.left_right_velocity, drone.for_back_velocity, drone.up_down_velocity, drone.yaw_velocity = control_drone(drone, coords, annotated_frame, HISTEREZIS_ENABLED, histerezis_on)
 			
 			# keep alive command
