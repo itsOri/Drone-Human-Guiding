@@ -4,14 +4,26 @@ import numpy as np
 from ultralytics import YOLO
 from datetime import datetime
 
-from . import template_matching_function as template_match_file
+try:
+    # Try importing from same directory (when run from testsfolder)
+    import template_matching_function as template_match_file
+except ImportError:
+    try:
+        # Try importing from testsfolder package (when run from parent directory)
+        from testsfolder import template_matching_function as template_match_file
+    except ImportError:
+        # Last resort: add current directory to path and import
+        import sys
+        import os
+        sys.path.append(os.path.dirname(__file__))
+        import template_matching_function as template_match_file
 
 # --- GLOBAL CONSTANTS & CONFIGURATION ---
 TIMESTAMP = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 PERSON_OUTPUT_FOLDER = f'./persons_data_{TIMESTAMP}'
-VIDEO_PATH = "../tello_capture_ori_trees.avi"
+VIDEO_PATH = "../videos/clean_video_2025-09-24_16-09-15.avi"
 MAX_RECENT_EXTRACTIONS = 20
-THRESHOLD_BEST_MATCH = 2000
+THRESHOLD_BEST_MATCH = 1200
 
 # --- MAIN DATA STORE ---
 # This dictionary will hold the image histories for ALL detected persons.
@@ -95,17 +107,59 @@ def save_all_persons(persons_dict, base_output_folder):
 
 def find_best_match(other_persons_dict, selected_id_templates):
 	# ... (your function is fine, no changes needed)
+	print(f"[TEMPLATE_MATCHING] Starting match with {len(selected_id_templates)} templates against {len(other_persons_dict)} persons")
+	print(f"[TEMPLATE_MATCHING] Using threshold: {THRESHOLD_BEST_MATCH}")
+	
 	min_score = -1
 	min_id = -1
+	all_scores = {}  # Store all scores for debugging
+	detailed_scores = {}  # Store individual template scores for each ID
+	
 	for id, extracted_image in other_persons_dict.items():
 		current_scores = [template_match_file.template_match(template, extracted_image) for template in selected_id_templates]
 		current_score = min(current_scores)
+		
+		# Store detailed information
+		all_scores[id] = current_score
+		detailed_scores[id] = {
+			'best_score': current_score,
+			'all_template_scores': current_scores,
+			'worst_score': max(current_scores),
+			'avg_score': sum(current_scores) / len(current_scores)
+		}
+		
 		if min_score == -1 or current_score < min_score:
 			min_score = current_score
 			min_id = id
-	print(f"Current lowest score: {min_score}, ID: {min_id}")
-	if min_id != -1 and min_score <= THRESHOLD_BEST_MATCH:
-		return min_id
+	
+	# Print detailed score analysis
+	print(f"[TEMPLATE_MATCHING] === DETAILED SCORE ANALYSIS ===")
+	for id in sorted(all_scores.keys()):
+		scores_info = detailed_scores[id]
+		print(f"[TEMPLATE_MATCHING] ID {id:2d}: BEST={scores_info['best_score']:6.1f} | AVG={scores_info['avg_score']:6.1f} | WORST={scores_info['worst_score']:6.1f}")
+		# Print first few individual scores to see the range
+		sample_scores = scores_info['all_template_scores'][:5]  # Show first 5 template scores
+		print(f"[TEMPLATE_MATCHING]      Sample scores: {[f'{s:.1f}' for s in sample_scores]}")
+	
+	print(f"[TEMPLATE_MATCHING] === SUMMARY ===")
+	print(f"[TEMPLATE_MATCHING] All match scores (best): {all_scores}")
+	print(f"[TEMPLATE_MATCHING] Best overall: {min_score:.1f} (ID {min_id})")
+	print(f"[TEMPLATE_MATCHING] Threshold: {THRESHOLD_BEST_MATCH}")
+	
+	# Show threshold analysis
+	if min_id != -1:
+		margin = THRESHOLD_BEST_MATCH - min_score
+		print(f"[TEMPLATE_MATCHING] Margin: {margin:.1f} ({'PASS' if margin >= 0 else 'FAIL'})")
+		
+		if min_score <= THRESHOLD_BEST_MATCH:
+			print(f"[TEMPLATE_MATCHING] ✅ MATCH ACCEPTED: Score {min_score:.1f} <= threshold {THRESHOLD_BEST_MATCH}")
+			return min_id
+		else:
+			print(f"[TEMPLATE_MATCHING] ❌ MATCH REJECTED: Score {min_score:.1f} > threshold {THRESHOLD_BEST_MATCH}")
+			print(f"[TEMPLATE_MATCHING] 💡 SUGGESTION: Consider threshold >= {min_score + 100:.0f} to accept this match")
+	else:
+		print(f"[TEMPLATE_MATCHING] ❌ NO CANDIDATES FOUND")
+	
 	return -1
 
 
@@ -116,7 +170,7 @@ def display_video_frame_by_frame():
 	"""
 	# This is the specific person we might want to re-identify if lost.
 	# The data collection happens for everyone regardless.
-	selected_id_to_track = 31
+	selected_id_to_track = 1
 
 	if not os.path.isfile(VIDEO_PATH):
 		print(f"[ERROR] Video file not found at: {VIDEO_PATH}")
