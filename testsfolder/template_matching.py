@@ -3,6 +3,10 @@ import os
 import numpy as np
 from ultralytics import YOLO
 from datetime import datetime
+import logging
+
+# Get logger from main module (will use main's configuration)
+logger = logging.getLogger(__name__)
 
 try:
     # Try importing from same directory (when run from testsfolder)
@@ -40,7 +44,7 @@ def extract_person_from_frame(results, target_id, original_frame, frame_number):
 		return None
 	person_index = track_ids.index(target_id)
 	if results[0].masks is None:
-		print(f"[WARN] No masks found for frame {frame_number}, cannot extract person.")
+		logger.warning(f"No masks found for frame {frame_number}, cannot extract person.")
 		return None
 	mask = results[0].masks[person_index]
 	binary_mask = mask.data[0].cpu().numpy().astype("uint8")
@@ -91,24 +95,24 @@ def save_all_persons(persons_dict, base_output_folder):
 	in sub-folders by person ID.
 	"""
 	if not persons_dict:
-		print("[INFO] Person dictionary is empty. Nothing to save.")
+		logger.info("Person dictionary is empty. Nothing to save.")
 		return
-	print(f"\n[INFO] Saving all collected person images to '{base_output_folder}'...")
+	logger.info(f"Saving all collected person images to '{base_output_folder}'...")
 	os.makedirs(base_output_folder, exist_ok=True)
 	for person_id, image_list in persons_dict.items():
 		person_folder = os.path.join(base_output_folder, f"person_{person_id}")
 		os.makedirs(person_folder, exist_ok=True)
-		print(f"  > Saving {len(image_list)} images for Person ID {person_id}...")
+		logger.info(f"  > Saving {len(image_list)} images for Person ID {person_id}...")
 		for i, img in enumerate(image_list):
 			filename = os.path.join(person_folder, f"capture_{i+1}.png")
 			cv2.imwrite(filename, img)
-	print("[INFO] All images saved successfully.")
+	logger.info("All images saved successfully.")
 
 
 def find_best_match(other_persons_dict, selected_id_templates):
 	# ... (your function is fine, no changes needed)
-	print(f"[TEMPLATE_MATCHING] Starting match with {len(selected_id_templates)} templates against {len(other_persons_dict)} persons")
-	print(f"[TEMPLATE_MATCHING] Using threshold: {THRESHOLD_BEST_MATCH}")
+	logger.info(f"[TEMPLATE_MATCHING] Starting match with {len(selected_id_templates)} templates against {len(other_persons_dict)} persons")
+	logger.info(f"[TEMPLATE_MATCHING] Using threshold: {THRESHOLD_BEST_MATCH}")
 	
 	min_score = -1
 	min_id = -1
@@ -132,33 +136,33 @@ def find_best_match(other_persons_dict, selected_id_templates):
 			min_score = current_score
 			min_id = id
 	
-	# Print detailed score analysis
-	print(f"[TEMPLATE_MATCHING] === DETAILED SCORE ANALYSIS ===")
+	# Log detailed score analysis
+	logger.debug(f"[TEMPLATE_MATCHING] === DETAILED SCORE ANALYSIS ===")
 	for id in sorted(all_scores.keys()):
 		scores_info = detailed_scores[id]
-		print(f"[TEMPLATE_MATCHING] ID {id:2d}: BEST={scores_info['best_score']:6.1f} | AVG={scores_info['avg_score']:6.1f} | WORST={scores_info['worst_score']:6.1f}")
-		# Print first few individual scores to see the range
+		logger.debug(f"[TEMPLATE_MATCHING] ID {id:2d}: BEST={scores_info['best_score']:6.1f} | AVG={scores_info['avg_score']:6.1f} | WORST={scores_info['worst_score']:6.1f}")
+		# Log first few individual scores to see the range
 		sample_scores = scores_info['all_template_scores'][:5]  # Show first 5 template scores
-		print(f"[TEMPLATE_MATCHING]      Sample scores: {[f'{s:.1f}' for s in sample_scores]}")
+		logger.debug(f"[TEMPLATE_MATCHING]      Sample scores: {[f'{s:.1f}' for s in sample_scores]}")
 	
-	print(f"[TEMPLATE_MATCHING] === SUMMARY ===")
-	print(f"[TEMPLATE_MATCHING] All match scores (best): {all_scores}")
-	print(f"[TEMPLATE_MATCHING] Best overall: {min_score:.1f} (ID {min_id})")
-	print(f"[TEMPLATE_MATCHING] Threshold: {THRESHOLD_BEST_MATCH}")
+	logger.info(f"[TEMPLATE_MATCHING] === SUMMARY ===")
+	logger.info(f"[TEMPLATE_MATCHING] All match scores (best): {all_scores}")
+	logger.info(f"[TEMPLATE_MATCHING] Best overall: {min_score:.1f} (ID {min_id})")
+	logger.info(f"[TEMPLATE_MATCHING] Threshold: {THRESHOLD_BEST_MATCH}")
 	
 	# Show threshold analysis
 	if min_id != -1:
 		margin = THRESHOLD_BEST_MATCH - min_score
-		print(f"[TEMPLATE_MATCHING] Margin: {margin:.1f} ({'PASS' if margin >= 0 else 'FAIL'})")
+		logger.info(f"[TEMPLATE_MATCHING] Margin: {margin:.1f} ({'PASS' if margin >= 0 else 'FAIL'})")
 		
 		if min_score <= THRESHOLD_BEST_MATCH:
-			print(f"[TEMPLATE_MATCHING] ✅ MATCH ACCEPTED: Score {min_score:.1f} <= threshold {THRESHOLD_BEST_MATCH}")
+			logger.info(f"[TEMPLATE_MATCHING] ✅ MATCH ACCEPTED: Score {min_score:.1f} <= threshold {THRESHOLD_BEST_MATCH}")
 			return min_id
 		else:
-			print(f"[TEMPLATE_MATCHING] ❌ MATCH REJECTED: Score {min_score:.1f} > threshold {THRESHOLD_BEST_MATCH}")
-			print(f"[TEMPLATE_MATCHING] 💡 SUGGESTION: Consider threshold >= {min_score + 100:.0f} to accept this match")
+			logger.info(f"[TEMPLATE_MATCHING] ❌ MATCH REJECTED: Score {min_score:.1f} > threshold {THRESHOLD_BEST_MATCH}")
+			logger.info(f"[TEMPLATE_MATCHING] 💡 SUGGESTION: Consider threshold >= {min_score + 100:.0f} to accept this match")
 	else:
-		print(f"[TEMPLATE_MATCHING] ❌ NO CANDIDATES FOUND")
+		logger.info(f"[TEMPLATE_MATCHING] ❌ NO CANDIDATES FOUND")
 	
 	return -1
 
@@ -173,15 +177,15 @@ def display_video_frame_by_frame():
 	selected_id_to_track = 1
 
 	if not os.path.isfile(VIDEO_PATH):
-		print(f"[ERROR] Video file not found at: {VIDEO_PATH}")
+		logger.error(f"Video file not found at: {VIDEO_PATH}")
 		return
 
 	video = cv2.VideoCapture(VIDEO_PATH)
 	if not video.isOpened():
-		print("[ERROR] Could not open video file.")
+		logger.error("Could not open video file.")
 		return
 
-	print("[INFO] Video opened successfully. Press 'q' to quit.")
+	logger.info("Video opened successfully. Press 'q' to quit.")
 	model = YOLO("../yolo_models/yolo11s-seg.pt")
 	frame_number = 0
 
@@ -189,7 +193,7 @@ def display_video_frame_by_frame():
 		while True:
 			success, frame = video.read()
 			if not success:
-				print("[INFO] Reached the end of the video.")
+				logger.info("Reached the end of the video.")
 				break
 
 			results = model.track(frame, persist=True, verbose=False, tracker="bytetrack.yaml", classes=[0])
@@ -210,10 +214,10 @@ def display_video_frame_by_frame():
 				
 				# Only search if we have templates and there are other people to check
 				if templates and all_persons_in_frame:
-					print(f"[WARN] Target ID {selected_id_to_track} lost. Attempting to re-acquire...")
+					logger.warning(f"Target ID {selected_id_to_track} lost. Attempting to re-acquire...")
 					replacement_id = find_best_match(all_persons_in_frame, templates)
 					if replacement_id != -1:
-						print(f"[SUCCESS] Re-acquired target! Old ID: {selected_id_to_track}, New ID: {replacement_id}")
+						logger.info(f"✓ Re-acquired target! Old ID: {selected_id_to_track}, New ID: {replacement_id}")
 						selected_id_to_track = replacement_id
 			# --- END OF RE-ID LOGIC ---
 
@@ -222,14 +226,14 @@ def display_video_frame_by_frame():
 			frame_number += 1
 
 			if cv2.waitKey(1) & 0xFF == ord('q'):
-				print("[INFO] 'q' pressed. Exiting.")
+				logger.info("'q' pressed. Exiting.")
 				break
 
 	except KeyboardInterrupt:
-		print("[INFO] Interrupted by user (Ctrl+C).")
+		logger.info("Interrupted by user (Ctrl+C).")
 
 	finally:
-		print("[INFO] Releasing video resources.")
+		logger.info("Releasing video resources.")
 		video.release()
 		cv2.destroyAllWindows()
 		# Use the new save function to save everything.

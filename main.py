@@ -112,7 +112,7 @@ put point on target id DONE
 check template matching on target id that it works 
 make clearer prompt for input of target and selected id DONE
 do logs also in a file , and check if it gets updated in live DONE`
-
+add penalty to template matching basded on distance from selected id
 """
 
 import cv2
@@ -120,11 +120,13 @@ import time
 from djitellopy import Tello
 from ultralytics import YOLO
 import threading
+import queue
 import numpy as np
 import os
 import logging
 from datetime import datetime 
 from testsfolder import template_matching
+from testsfolder import RRTStar_New as rrt
 
 #TODO change container to class
 TIMESTAMP = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -133,6 +135,7 @@ VIDEOS_DIR = "videos"
 os.makedirs(VIDEOS_DIR, exist_ok=True)
 OUTPUT_FILENAME = os.path.join(VIDEOS_DIR, f'clean_video_{TIMESTAMP}.avi')
 OUTPUT_ANNOTATED_FILENAME = os.path.join(VIDEOS_DIR, f'annotated_video_{TIMESTAMP}.avi')
+OUTPUT_BW_SEGMENTED_FILENAME = os.path.join(VIDEOS_DIR, f'black_white_segmented_{TIMESTAMP}.avi')
 LOG_FILENAME = os.path.join(VIDEOS_DIR, f'drone_log_{TIMESTAMP}.log')
 
 # Configure logging
@@ -150,7 +153,7 @@ WIDTH = 640
 HEIGHT = 480
 selected_id = None
 
-RECT_CENTER = (WIDTH // 2, HEIGHT // 2 + 50)
+RECT_CENTER = (WIDTH // 2, HEIGHT // 2 + 120)
 rect_size = {"w": 100, "h": 100}
 MIN_RECT_SIZE = 50
 CONST_RECT_TOP_LEFT = (RECT_CENTER[0] - rect_size['w'] // 2, RECT_CENTER[1] - rect_size['h'] // 2)
@@ -161,18 +164,26 @@ HISTEREZIS_ENABLED = True # Fixed hysteresis logic to prevent ping-pong behavior
 TARGET_TRACKING_ENABLED = True # Set to True to enable target selection and tracking logic
 
 # === PERFORMANCE OPTIMIZATION SETTINGS ===
-YOLO_FRAME_SKIP = 2  # Process every Nth frame (1=every frame, 2=every 2nd frame, 3=every 3rd frame)
+YOLO_FRAME_SKIP = 1  # Process every Nth frame (1=every frame, 2=every 2nd frame, 3=every 3rd frame)
 TEMPLATE_MATCHING_FRAME_SKIP = 1  # Update templates every Nth YOLO frame (reduces template collection frequency)
 ENABLE_PERFORMANCE_MONITORING = True  # Show FPS and processing time stats
+
+# === RRT* PATH PLANNING SETTINGS ===
+ENABLE_RRT_PATH = True  # Enable RRT* path planning from selected to target
+RRT_FRAME_SKIP = 5  # Calculate RRT* path every N frames (1=every frame, 5=every 5th frame)
+RRT_MAX_ITER = 1000  # Maximum iterations for RRT* (lower = faster but less optimal)
+RRT_DELTA = 15  # Step size for RRT* tree expansion
+RRT_RADIUS = 30  # Radius for rewiring in RRT*
+RRT_PATH_COLOR = (255, 0, 255)  # Magenta/Purple color for path (BGR)
 
 #RECT_TOP_LEFT = (RECT_CENTER[0] - RECT_W // 2, RECT_CENTER[1] - RECT_H // 2)
 #RECT_BOTTOM_RIGHT = (RECT_CENTER[0] + RECT_W // 2, RECT_CENTER[1] + RECT_H // 2)
 
 BLACK = (0, 0, 0)
 
-YAW_MOVING_VELOCITY = 20
-FB_MOVING_VELOCITY = 30
-DRONE_START_HEIGHT = 250 # 200 is good for outside
+YAW_MOVING_VELOCITY = 15
+FB_MOVING_VELOCITY = 25
+DRONE_START_HEIGHT = 300 # 200 is good for outside, 70 for inside 
 MAX_LOST_ID_FRAMES = 20
 
 # === YOLO DETECTION CLASSES ===
@@ -266,10 +277,17 @@ def shutdown_drone(drone):
 # def get_id(result):
 # 	return
     
-def target_thread(target_id_container):
+def target_thread(target_id_container, selected_id_container):
     target_input = input("[INPUT] Enter Target Person ID to navigate to: ")
     try:
         target_id = int(target_input)
+        
+        # Check if this ID is the same as selected ID
+        if selected_id_container["id"] and target_id in selected_id_container["history"]:
+            print(f"[ERROR] Target ID {target_id} is the same as selected ID. Target and selected must be different.")
+            logger.warning(f"Rejected target ID {target_id} - same as selected ID")
+            return
+        
         target_id_container["id"].append(target_id)
         target_id_container["history"].append(target_id)
         target_id_container["lost_counter"] = 0
@@ -284,11 +302,19 @@ def target_thread(target_id_container):
     
 
 # TODO unite this func with target thread using generic container or string param for text display to user
-def input_thread(selected_id_container):
+def input_thread(selected_id_container, target_id_container):
     user_input = input("[INPUT] Enter Person ID to follow: ")
     try:
-        selected_id_container["id"].append(int(user_input))
-        selected_id_container["history"].append(int(user_input))
+        selected_id = int(user_input)
+        
+        # Check if this ID is the same as target ID
+        if target_id_container["id"] and selected_id in target_id_container["history"]:
+            print(f"[ERROR] Selected ID {selected_id} is the same as target ID. Target and selected must be different.")
+            logger.warning(f"Rejected selected ID {selected_id} - same as target ID")
+            return
+        
+        selected_id_container["id"].append(selected_id)
+        selected_id_container["history"].append(selected_id)
         selected_id_container["lost_counter"] = 0
         selected_id_container["id_was_seen"] = False
         logger.info(f"Selected Person ID: {selected_id_container['id']}")
@@ -299,11 +325,11 @@ def input_thread(selected_id_container):
 
 
 # TODO check its generic func
-def init_id_getter_thread(container):
+def init_id_getter_thread(selected_id_container, target_id_container):
     """
-    Initializes and starts a background thread to continuously get user input.
+    Initializes and starts a background thread to continuously get user input for selected ID.
     """
-    thread = threading.Thread(target=input_thread, args=(container,))
+    thread = threading.Thread(target=input_thread, args=(selected_id_container, target_id_container))
     thread.daemon = True
     thread.start()
     return thread
@@ -453,14 +479,20 @@ def get_target_id_in_frame(results, target_ids):
     logger.error("Error - target id not in frame (or not a person)")
     return None
 
-def find_id_in_frame(results, selected_id_container, persons_dict, all_persons_in_frame):
+def find_id_in_frame(results, selected_id_container, persons_dict, all_persons_in_frame, exclude_ids=None):
     """
     Checks if an ID is selected and processes tracking results to get coordinates.
     Stores the coordinates in selected_id_container["coords"] if found.
     If the ID is not found, resets selection and input thread status.
     Returns updated (id_selected).
+    
+    Args:
+        exclude_ids: List of IDs to exclude from template matching (e.g., the opposite tracked ID)
     """
     is_id_found = False
+    
+    if exclude_ids is None:
+        exclude_ids = []
     
     # Ensure all required keys exist in the container
     if "id_was_seen" not in selected_id_container:
@@ -480,7 +512,7 @@ def find_id_in_frame(results, selected_id_container, persons_dict, all_persons_i
     if not target_id and selected_id_container["id_was_seen"]:
         logger.debug(f"Target not found in frame, attempting template matching...")
         # Keep the old followed_id for template matching, don't overwrite it yet
-        target_id = find_new_id(persons_dict, selected_id_container, all_persons_in_frame)
+        target_id = find_new_id(persons_dict, selected_id_container, all_persons_in_frame, exclude_ids)
         logger.debug(f"Template matching result: {target_id}")
 
     # Only update followed_id after template matching attempt
@@ -717,6 +749,120 @@ def save_segmented_persons(results, frame):
                 cv2.imwrite(save_path, person_crop_masked_bgr)
 
 
+def create_bw_segmented_frame(results, frame_shape, selected_id=None, target_id=None, 
+                               selected_coords=None, target_coords=None, rrt_path=None):
+    """
+    Create a black and white segmented frame where detected objects (persons and cars) 
+    are black and the background is white. Selected and target IDs are represented 
+    as colored dots instead of full segmentation. Optionally draws RRT* path between them.
+    
+    Args:
+        results: YOLO detection results with masks
+        frame_shape: Shape of the original frame (height, width, channels)
+        selected_id: ID of the selected person to follow (will be red dot)
+        target_id: ID of the target person to navigate to (will be green dot)
+        selected_coords: Coordinates (x1, y1, x2, y2, cx, cy) of selected ID
+        target_coords: Coordinates (x1, y1, x2, y2, cx, cy) of target ID
+        rrt_path: Pre-calculated RRT* path (list of (x, y) tuples), or None
+    
+    Returns:
+        numpy.ndarray: Black and white segmented frame (BGR for colored dots/path)
+        selected_center: Center coordinates of selected ID (for RRT planning)
+        target_center: Center coordinates of target ID (for RRT planning)
+    """
+    height, width = frame_shape[:2]
+    
+    # Start with a white frame (grayscale)
+    bw_frame = np.ones((height, width), dtype=np.uint8) * 255
+    
+    # If no masks detected, convert to BGR and return
+    if results[0].masks is None or results[0].boxes is None:
+        return cv2.cvtColor(bw_frame, cv2.COLOR_GRAY2BGR), bw_frame, None, None
+    
+    # Check if we have class and ID information
+    if results[0].boxes.cls is None:
+        return cv2.cvtColor(bw_frame, cv2.COLOR_GRAY2BGR), bw_frame, None, None
+    
+    try:
+        class_ids = results[0].boxes.cls.int().cpu().tolist()
+        
+        # Get tracking IDs if available
+        track_ids = []
+        if hasattr(results[0].boxes, 'id') and results[0].boxes.id is not None:
+            track_ids = results[0].boxes.id.int().cpu().tolist()
+        
+        # Store selected and target centers for later
+        selected_center = None
+        target_center = None
+        
+        # Iterate through all masks and paint detected objects black
+        for i, class_id in enumerate(class_ids):
+            # Get tracking ID for this detection
+            current_track_id = track_ids[i] if i < len(track_ids) else None
+            
+            # Skip selected and target IDs - we'll draw dots for them instead
+            if current_track_id in [selected_id, target_id]:
+                # Store center for path planning
+                box = results[0].boxes[i]
+                coords = box.xyxy[0].tolist()
+                x1, y1, x2, y2 = map(int, coords)
+                center = (int((x1 + x2) / 2), int((y1 + y2) / 2))
+                
+                if current_track_id == selected_id:
+                    selected_center = center
+                elif current_track_id == target_id:
+                    target_center = center
+                continue
+            
+            # Only process persons (class 0) and cars (class 2)
+            if class_id in [0, 2]:
+                mask = results[0].masks[i]
+                binary_mask = mask.data[0].cpu().numpy().astype("uint8")
+                
+                # Resize mask to frame size if needed
+                if binary_mask.shape != (height, width):
+                    binary_mask = cv2.resize(binary_mask, (width, height))
+                
+                # Set detected object pixels to black (0)
+                bw_frame[binary_mask > 0] = 0
+        
+        # Convert grayscale to BGR to allow colored dots and path
+        bw_frame_bgr = cv2.cvtColor(bw_frame, cv2.COLOR_GRAY2BGR)
+        
+        # Draw RRT* path if provided (pre-calculated in separate thread)
+        if ENABLE_RRT_PATH and rrt_path and len(rrt_path) > 1:
+            try:
+                # Draw path on the image
+                bw_frame_bgr = rrt.draw_path_on_image(bw_frame_bgr, rrt_path, RRT_PATH_COLOR, thickness=3)
+            except Exception as e:
+                logger.warning(f"[RRT*] Error drawing path: {e}")
+        
+        # Draw colored dots for selected and target IDs
+        for i, box in enumerate(results[0].boxes):
+            if hasattr(box, 'id') and box.id is not None:
+                obj_id = int(box.id.item())
+                
+                # Get center coordinates
+                coords = box.xyxy[0].tolist()
+                x1, y1, x2, y2 = map(int, coords)
+                center_x = int((x1 + x2) / 2)
+                center_y = int((y1 + y2) / 2)
+                
+                # Draw red dot for selected ID (on top of path)
+                if obj_id == selected_id:
+                    cv2.circle(bw_frame_bgr, (center_x, center_y), radius=6, color=(0, 0, 255), thickness=-1)
+                
+                # Draw green dot for target ID (on top of path)
+                elif obj_id == target_id:
+                    cv2.circle(bw_frame_bgr, (center_x, center_y), radius=6, color=(0, 255, 0), thickness=-1)
+        
+        return bw_frame_bgr, bw_frame, selected_center, target_center
+                
+    except Exception as e:
+        logger.warning(f"Error creating BW segmented frame: {e}")
+        return cv2.cvtColor(bw_frame, cv2.COLOR_GRAY2BGR), bw_frame, None, None
+
+
 def extract_all_visible_objects(results, original_frame):
     """
     Extract all visible persons (class 0 only) from the current frame for template matching.
@@ -777,27 +923,55 @@ def update_objects_dict(all_objects_in_frame, objects_dict, max_recent_extractio
             objects_dict[object_id] = objects_dict[object_id][-max_recent_extractions:]
 
 
-def find_new_id(template_dict, selected_id_container, all_objects_in_frame):
+def find_new_id(template_dict, selected_id_container, all_objects_in_frame, exclude_ids=None):
+    """
+    Find a new ID using template matching, excluding specified IDs.
+    
+    Args:
+        template_dict: Dictionary of templates for each ID
+        selected_id_container: Container with the lost ID information
+        all_objects_in_frame: Current objects detected in frame
+        exclude_ids: List of IDs to exclude from matching (e.g., the opposite tracked ID)
+    """
     selected_id_to_track = selected_id_container["followed_id"]
     templates = template_dict.get(selected_id_to_track, [])
     replacement_id = -1
     
+    if exclude_ids is None:
+        exclude_ids = []
+    
     logger.info(f"[TEMPLATE_MATCHING] Lost ID: {selected_id_to_track}")
     logger.info(f"[TEMPLATE_MATCHING] Available templates: {len(templates)}")
     logger.info(f"[TEMPLATE_MATCHING] Current objects in frame: {list(all_objects_in_frame.keys()) if all_objects_in_frame else 'None'}")
+    if exclude_ids:
+        logger.info(f"[TEMPLATE_MATCHING] Excluding IDs from matching: {exclude_ids}")
     
     if templates and all_objects_in_frame:
         logger.warning(f"Target ID {selected_id_to_track} lost. Attempting to re-acquire...")
         logger.info(f"[TEMPLATE_MATCHING] === ATTEMPTING RE-IDENTIFICATION ===")
         
         # Convert all_objects_in_frame format for template matching
+        # and filter out excluded IDs and non-person objects
         objects_for_matching = {}
         if isinstance(list(all_objects_in_frame.values())[0], dict):
             # New format: {id: {'image': img, 'class_id': cls}}
-            objects_for_matching = {obj_id: obj_info['image'] for obj_id, obj_info in all_objects_in_frame.items()}
+            # Only include persons (class 0) for template matching
+            objects_for_matching = {
+                obj_id: obj_info['image'] 
+                for obj_id, obj_info in all_objects_in_frame.items() 
+                if obj_id not in exclude_ids and obj_info.get('class_id') == 0
+            }
         else:
             # Old format: {id: image}
-            objects_for_matching = all_objects_in_frame
+            objects_for_matching = {
+                obj_id: img 
+                for obj_id, img in all_objects_in_frame.items() 
+                if obj_id not in exclude_ids
+            }
+        
+        if not objects_for_matching:
+            logger.info(f"[TEMPLATE_MATCHING] No valid objects after excluding IDs {exclude_ids}")
+            return None
         
         replacement_id = template_matching.find_best_match(objects_for_matching, templates)
         if replacement_id != -1:
@@ -827,9 +1001,9 @@ def get_coords(container):
 
     return coords
 
-def init_input_thread(selected_id_container, user_getter_thread):
+def init_input_thread(selected_id_container, target_id_container, user_getter_thread):
     if((not selected_id_container["id"]) and not is_alive(user_getter_thread)):
-        user_getter_thread = init_id_getter_thread(selected_id_container)
+        user_getter_thread = init_id_getter_thread(selected_id_container, target_id_container)
     return user_getter_thread
 
 
@@ -883,6 +1057,126 @@ class PerformanceMonitor:
             logger.info(f"[PERFORMANCE] FPS: {avg_fps:.1f} | Frame: {avg_frame_time:.1f}ms | YOLO: {yolo_time:.1f}ms | Templates: {template_time:.1f}ms")
 
 
+class RRTPathPlanner:
+    """
+    Threaded RRT* path planner to avoid blocking the main loop.
+    Calculates paths asynchronously and provides the latest available path.
+    """
+    def __init__(self):
+        self.request_queue = queue.Queue(maxsize=1)  # Only keep the latest request
+        self.result_queue = queue.Queue(maxsize=1)   # Only keep the latest result
+        self.current_path = None
+        self.is_running = True
+        self.worker_thread = threading.Thread(target=self._worker, daemon=True)
+        self.worker_thread.start()
+        logger.info("[RRT*] Path planner thread started")
+    
+    def _worker(self):
+        """Background worker that processes path planning requests"""
+        while self.is_running:
+            try:
+                # Wait for a new request (with timeout to allow checking is_running)
+                request = self.request_queue.get(timeout=0.1)
+                
+                bw_frame, selected_center, target_center, max_iter, delta, radius = request
+                
+                # Calculate the path
+                try:
+                    path = rrt.find_rrt_path(
+                        bw_frame,
+                        selected_center,
+                        target_center,
+                        max_iter=max_iter,
+                        delta=delta,
+                        radius=radius
+                    )
+                    
+                    # Put result in queue (discard old result if any)
+                    if not self.result_queue.empty():
+                        try:
+                            self.result_queue.get_nowait()
+                        except queue.Empty:
+                            pass
+                    
+                    self.result_queue.put(path)
+                    
+                except Exception as e:
+                    logger.warning(f"[RRT*] Error in worker thread: {e}")
+                
+            except queue.Empty:
+                continue
+            except Exception as e:
+                logger.error(f"[RRT*] Unexpected error in worker: {e}")
+    
+    def request_path(self, bw_frame, selected_center, target_center, 
+                     max_iter=1000, delta=15, radius=30):
+        """
+        Request a new path calculation. Non-blocking.
+        Discards previous request if not yet processed.
+        """
+        if selected_center is None or target_center is None:
+            return
+        
+        # Discard old request if any
+        if not self.request_queue.empty():
+            try:
+                self.request_queue.get_nowait()
+            except queue.Empty:
+                pass
+        
+        # Submit new request
+        try:
+            self.request_queue.put_nowait((
+                bw_frame.copy(),  # Make a copy to avoid race conditions
+                selected_center,
+                target_center,
+                max_iter,
+                delta,
+                radius
+            ))
+        except queue.Full:
+            pass  # Queue full, skip this request
+    
+    def get_latest_path(self):
+        """
+        Get the latest calculated path if available.
+        Non-blocking. Returns None if no path is ready.
+        """
+        try:
+            # Get the latest result without blocking
+            self.current_path = self.result_queue.get_nowait()
+        except queue.Empty:
+            pass  # No new path, keep using current one
+        
+        return self.current_path
+    
+    def clear_path(self):
+        """
+        Clear the current path and any pending calculations.
+        Called when target or selected ID is lost.
+        """
+        self.current_path = None
+        # Clear any pending requests
+        while not self.request_queue.empty():
+            try:
+                self.request_queue.get_nowait()
+            except queue.Empty:
+                break
+        # Clear any pending results
+        while not self.result_queue.empty():
+            try:
+                self.result_queue.get_nowait()
+            except queue.Empty:
+                break
+        logger.info("[RRT*] Path cleared (ID lost)")
+    
+    def stop(self):
+        """Stop the worker thread"""
+        self.is_running = False
+        if self.worker_thread.is_alive():
+            self.worker_thread.join(timeout=1.0)
+        logger.info("[RRT*] Path planner thread stopped")
+
 
 def main():
     # Print to terminal only - inform user where logs are saved
@@ -895,7 +1189,10 @@ def main():
     logger.info("="*60)
     logger.info("DRONE CONTROL SYSTEM STARTED")
     logger.info(f"Timestamp: {TIMESTAMP}")
-    logger.info(f"Video files: {OUTPUT_FILENAME}, {OUTPUT_ANNOTATED_FILENAME}")
+    logger.info(f"Video files:")
+    logger.info(f"  - Clean: {OUTPUT_FILENAME}")
+    logger.info(f"  - Annotated: {OUTPUT_ANNOTATED_FILENAME}")
+    logger.info(f"  - BW Segmented: {OUTPUT_BW_SEGMENTED_FILENAME}")
     logger.info(f"Log file: {LOG_FILENAME}")
     logger.info("="*60)
 
@@ -918,8 +1215,7 @@ def main():
         "target_class": None  # Will be set once we identify the target object type
     }
 
-    persons_dict = {}  # Template dictionary for persons (following)
-    targets_dict = {}  # Template dictionary for targets (navigation destinations)
+    persons_dict = {}  # Template dictionary for persons (used for both following and target tracking)
     model = YOLO("./yolo_models/yolo11s-seg.pt")
     
     # thread for id selection 
@@ -931,15 +1227,20 @@ def main():
     drone = start_drone()
     out_clean = start_recording(OUTPUT_FILENAME)
     out_annotated = start_recording(OUTPUT_ANNOTATED_FILENAME)
+    out_bw_segmented = start_recording(OUTPUT_BW_SEGMENTED_FILENAME)
 
     launch_drone(drone)
 
     # Performance monitoring
     perf_monitor = PerformanceMonitor() if ENABLE_PERFORMANCE_MONITORING else None
     
+    # RRT* path planner (threaded)
+    rrt_planner = RRTPathPlanner() if ENABLE_RRT_PATH else None
+    
     # Frame processing variables
     frame_counter = 0
     yolo_frame_counter = 0
+    rrt_frame_counter = 0
     last_yolo_results = None
 
     histerezis_on = {
@@ -951,6 +1252,8 @@ def main():
     
     logger.info(f"[OPTIMIZATION] YOLO processing every {YOLO_FRAME_SKIP} frames")
     logger.info(f"[OPTIMIZATION] Template matching every {TEMPLATE_MATCHING_FRAME_SKIP} YOLO frames")
+    if ENABLE_RRT_PATH:
+        logger.info(f"[RRT*] Path planning enabled (threaded, async, every {RRT_FRAME_SKIP} frames)")
     
     try:
         while True:
@@ -964,8 +1267,8 @@ def main():
                 continue
             
             # Determine if we should process YOLO on this frame
-            should_process_yolo = (frame_counter % YOLO_FRAME_SKIP == 1)
-            should_update_templates = (yolo_frame_counter % TEMPLATE_MATCHING_FRAME_SKIP == 1)
+            should_process_yolo = (frame_counter % YOLO_FRAME_SKIP == 0)
+            should_update_templates = (yolo_frame_counter % TEMPLATE_MATCHING_FRAME_SKIP == 0)
             
             if should_process_yolo:
                 if perf_monitor:
@@ -996,20 +1299,15 @@ def main():
                         
                     logger.info(f"[OPTIMIZATION] Updating templates (frame {yolo_frame_counter})")
                     
-                    # 1. Extract all persons visible in the current frame (for following)
+                    # Extract all persons visible in the current frame (for both following and target tracking)
+                    # Only persons (class 0) are used for template matching
                     all_persons_in_frame = template_matching.extract_all_visible_persons(results, frame)
-                    
-                    # 2. Extract all objects visible in the current frame (for targets)
-                    all_objects_in_frame = extract_all_visible_objects(results, frame)
                     
                     # Debug: Show extracted objects
                     if all_persons_in_frame:
                         logger.info(f"[TEMPLATE_MATCHING] Extracted {len(all_persons_in_frame)} persons: {list(all_persons_in_frame.keys())}")
-                    if all_objects_in_frame:
-                        objects_str = ", ".join([f"ID{id}({get_object_class_name(info['class_id'])})" for id, info in all_objects_in_frame.items()])
-                        logger.info(f"[TEMPLATE_MATCHING] Extracted objects: {objects_str}")
                     
-                    # 3. Update template dictionaries
+                    # Update template dictionaries (use same persons_dict for both selected and target)
                     if all_persons_in_frame:
                         template_matching.update_persons_dict(all_persons_in_frame, persons_dict, template_matching.MAX_RECENT_EXTRACTIONS)
                         # Debug: Show current template counts
@@ -1017,53 +1315,52 @@ def main():
                         if template_counts:
                             logger.info(f"[TEMPLATE_MATCHING] Person template counts: {template_counts}")
                     
-                    if all_objects_in_frame:
-                        update_objects_dict(all_objects_in_frame, targets_dict, template_matching.MAX_RECENT_EXTRACTIONS)
-                        # Debug: Show target template counts
-                        target_template_counts = {oid: len(templates) for oid, templates in targets_dict.items()}
-                        if target_template_counts:
-                            logger.info(f"[TEMPLATE_MATCHING] Target template counts: {target_template_counts}")
-                    
                     if perf_monitor:
                         perf_monitor.end_template()
                 else:
-                    # Use empty dictionaries when not updating templates
+                    # Use empty dictionary when not updating templates
                     all_persons_in_frame = {}
-                    all_objects_in_frame = {}
             else:
                 # Use last YOLO results and create annotated frame from original
                 results = last_yolo_results
-                annotated_frame = frame.copy()
                 all_persons_in_frame = {}
-                all_objects_in_frame = {}
                 
                 # Draw previous detections on skipped frames if available
                 if results is not None and results[0].boxes is not None:
                     annotated_frame = results[0].plot()
+                else:
+                    # No YOLO results yet, just show the raw frame
+                    annotated_frame = frame.copy()
 
-            user_getter_thread = init_input_thread(selected_id_container, user_getter_thread)
+            user_getter_thread = init_input_thread(selected_id_container, selected_target_container, user_getter_thread)
 
             # Initialize variables
             is_id_found = False
             is_target_found = False
 
-            if(selected_id_container["id"]):
+            # Only process tracking if we have valid YOLO results
+            if results is not None and selected_id_container["id"]:
                 # Target tracking logic (controlled by TARGET_TRACKING_ENABLED flag)
                 if TARGET_TRACKING_ENABLED:
                     # Use different input thread for target (asks for target objects)
                     if((not selected_target_container["id"]) and not is_alive(target_getter_thread)):
-                        target_getter_thread = threading.Thread(target=target_thread, args=(selected_target_container,))
+                        target_getter_thread = threading.Thread(target=target_thread, args=(selected_target_container, selected_id_container))
                         target_getter_thread.daemon = True
                         target_getter_thread.start()
                     #follow target - now with template matching support
-                    is_target_found = find_id_in_frame(results, selected_target_container, targets_dict, all_objects_in_frame)
+                    # Exclude selected ID history from target template matching
+                    # Only use persons for template matching (persons_dict is used for both selected and target)
+                    is_target_found = find_id_in_frame(results, selected_target_container, persons_dict, all_persons_in_frame, 
+                                                       exclude_ids=selected_id_container["history"])
                 
                 # saves the coordinates in container IMPORTANT DONT COMMENT
-                is_id_found = find_id_in_frame(results, selected_id_container, persons_dict, all_persons_in_frame)
+                # Exclude target ID history from selected template matching
+                is_id_found = find_id_in_frame(results, selected_id_container, persons_dict, all_persons_in_frame,
+                                               exclude_ids=selected_target_container["history"])
                 # TODO: pivot to new function that will take care of scanning the potential target objects
 
             # Display detected objects (persons and cars)
-            if results[0].boxes is not None:
+            if results is not None and results[0].boxes is not None:
                 detected_objects = {}
                 for box in results[0].boxes:
                     if hasattr(box, 'id') and box.id is not None:
@@ -1117,6 +1414,65 @@ def main():
             cv2.imshow('Tello Video Feed', annotated_frame)
             out_annotated.write(cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
             out_clean.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+            
+            # Create and write BW segmented frame with selected/target as colored dots and RRT* path
+            if results is not None:
+                selected_followed_id = selected_id_container.get("followed_id")
+                target_followed_id = selected_target_container.get("followed_id") if TARGET_TRACKING_ENABLED else None
+                
+                # Check if IDs are actually present in the current frame (not just tracked with lost counter)
+                # This ensures path is deleted immediately when ID disappears, not after MAX_LOST_ID_FRAMES
+                selected_actually_present = (selected_id_container.get("lost_counter", 0) == 0 and 
+                                            selected_id_container.get("coords") is not None)
+                target_actually_present = (TARGET_TRACKING_ENABLED and 
+                                          selected_target_container.get("lost_counter", 0) == 0 and 
+                                          selected_target_container.get("coords") is not None)
+                
+                # Get latest calculated path (non-blocking)
+                # This returns the last calculated path (cached) if no new path is ready
+                # Clear the path immediately if either ID is not actually present in frame
+                current_rrt_path = None
+                both_ids_present = selected_actually_present and (target_actually_present if TARGET_TRACKING_ENABLED else False)
+                
+                if rrt_planner and both_ids_present:
+                    current_rrt_path = rrt_planner.get_latest_path()
+                elif rrt_planner and not both_ids_present:
+                    # Clear the path immediately when IDs disappear from frame
+                    logger.debug(f"[RRT*] Clearing path - Selected present: {selected_actually_present}, Target present: {target_actually_present}")
+                    rrt_planner.clear_path()
+                
+                # Create BW frame and get centers for next RRT calculation
+                bw_segmented_frame, bw_frame_gray, sel_center, tgt_center = create_bw_segmented_frame(
+                    results, 
+                    frame.shape, 
+                    selected_followed_id, 
+                    target_followed_id,
+                    coords,
+                    target_coords,
+                    current_rrt_path  # Use cached path or newly calculated path if ready
+                )
+                out_bw_segmented.write(bw_segmented_frame)
+                
+                # Request new path calculation every RRT_FRAME_SKIP frames (async, non-blocking)
+                should_calculate_rrt = (frame_counter % RRT_FRAME_SKIP == 0)
+                if rrt_planner and sel_center and tgt_center:
+                    if should_calculate_rrt:
+                        rrt_frame_counter += 1
+                        logger.debug(f"[RRT*] Requesting NEW path calculation (frame {rrt_frame_counter})")
+                        rrt_planner.request_path(
+                            bw_frame_gray,
+                            sel_center,
+                            tgt_center,
+                            max_iter=RRT_MAX_ITER,
+                            delta=RRT_DELTA,
+                            radius=RRT_RADIUS
+                        )
+                    # When should_calculate_rrt is False, we simply reuse the last path
+                    # (already retrieved above via get_latest_path())
+            else:
+                # Write blank white frame when no YOLO results yet
+                blank_frame = np.ones((frame.shape[0], frame.shape[1], 3), dtype=np.uint8) * 255
+                out_bw_segmented.write(blank_frame)
 
 
             if should_quit():
@@ -1131,9 +1487,13 @@ def main():
     except KeyboardInterrupt:
         print("\n[INFO] Interrupted by user. Shutting down...")
         logger.info("Interrupted by user.")
+    
+    finally:
+        # Stop RRT planner thread
+        if rrt_planner:
+            rrt_planner.stop()
 
-
-    exit([out_clean, out_annotated], drone)
+    exit([out_clean, out_annotated, out_bw_segmented], drone)
     
     print()
     print("="*60)
