@@ -204,24 +204,23 @@ NOTEPAD_PATH = r"C:\Program Files (x86)\Notepad++\notepad++.exe"
 #------- Functions -------#
 def open_log_in_editor(log_filename):
     """
-    Opens the given log file in Notepad++ if available, otherwise falls back to Notepad.
+    Opens a new PowerShell window showing the last 20 lines of the log file,
+    continuously updating (like 'tail -f' in Linux).
     """
+    # Make sure the log file exists
+    if not os.path.exists(log_filename):
+        logger.error(f"Log file not found: {log_filename}")
+        return
+
+    # PowerShell command to show last 20 lines and follow the file
     powershell_cmd = f'powershell -NoExit -Command "Get-Content -Path \'{log_filename}\' -Tail 20 -Wait"'
-    if os.path.exists(NOTEPAD_PATH):
-        # try:
-        #     subprocess.Popen([NOTEPAD_PATH, log_filename])
-        #     logger.info(f"Opened log file in Notepad++: {log_filename}")
-        # except Exception as e:
-        #     logger.warning(f"Failed to open log in Notepad++: {e}")
-            # PowerShell command: show last 20 lines and follow the file
-        try:
-            subprocess.Popen(["start", "cmd", "/k", powershell_cmd], shell=True)
-            logger.info(f"Opened log tail terminal for: {log_filename}")
-        except Exception as e:
-            logger.warning(f"Failed to open log tail terminal: {e}")
-    else:
-        print("⚠️ Notepad++ not found, opening in Notepad.")
-        subprocess.Popen(["notepad.exe", log_filename])
+
+    try:
+        # Open PowerShell in a new window
+        subprocess.Popen(["powershell", "-NoExit", "-Command", f"Get-Content -Path '{log_filename}' -Tail 20 -Wait"])
+        logger.info(f"Opened PowerShell tail view for: {log_filename}")
+    except Exception as e:
+        logger.warning(f"Failed to open PowerShell tail view: {e}")
 
 def RECT_TOP_LEFT():
     if(DYNAMIC_RECT is False): 
