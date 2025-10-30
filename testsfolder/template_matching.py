@@ -8,7 +8,9 @@ import subprocess
 
 # Get logger from main module (will use main's configuration)
 TIMESTAMP = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-VIDEOS_DIR = "videos"
+# Get the project root directory (parent of testsfolder)
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+VIDEOS_DIR = os.path.join(PROJECT_ROOT, "videos")
 LOG_FILENAME = os.path.join(VIDEOS_DIR, f'drone_log_{TIMESTAMP}.log')
 logging.basicConfig(
     level=logging.INFO,
@@ -36,7 +38,9 @@ except ImportError:
 # --- GLOBAL CONSTANTS & CONFIGURATION ---
 TIMESTAMP = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 PERSON_OUTPUT_FOLDER = f'./persons_data_{TIMESTAMP}'
-VIDEO_PATH = r"C:\Users\orifr\OneDrive - Technion\Documents\semester_f\project\drone_project_archives\Archive\clean_video_2025-10-17_17-25-20.avi"
+#VIDEO_PATH = r"C:\Users\orifr\OneDrive - Technion\Documents\semester_f\project\drone_project_archives\Archive\clean_video_2025-10-17_17-25-20.avi"
+VIDEO_PATH = "../videos/clean_video_2025-10-17_17-25-20.avi"
+
 MAX_RECENT_EXTRACTIONS = 20
 THRESHOLD_BEST_MATCH = 1200
 
@@ -213,7 +217,7 @@ def display_video_frame_by_frame():
 	"""
 	# This is the specific person we might want to re-identify if lost.
 	# The data collection happens for everyone regardless.
-	selected_id_to_track = 24
+	selected_id_to_track = 1
 
 	if not os.path.isfile(VIDEO_PATH):
 		logger.error(f"Video file not found at: {VIDEO_PATH}")
