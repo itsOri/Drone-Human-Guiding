@@ -57,7 +57,6 @@ def display_video_frame_by_frame():
         video.release()
         cv2.destroyAllWindows()
 
-
 # --- Run the function ---
 if __name__ == "__main__":
     display_video_frame_by_frame()

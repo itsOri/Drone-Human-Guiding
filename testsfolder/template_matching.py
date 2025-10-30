@@ -4,8 +4,19 @@ import numpy as np
 from ultralytics import YOLO
 from datetime import datetime
 import logging
+import subprocess
 
 # Get logger from main module (will use main's configuration)
+TIMESTAMP = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+VIDEOS_DIR = "videos"
+LOG_FILENAME = os.path.join(VIDEOS_DIR, f'drone_log_{TIMESTAMP}.log')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(LOG_FILENAME),
+    ]
+)
 logger = logging.getLogger(__name__)
 
 try:
@@ -25,7 +36,7 @@ except ImportError:
 # --- GLOBAL CONSTANTS & CONFIGURATION ---
 TIMESTAMP = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 PERSON_OUTPUT_FOLDER = f'./persons_data_{TIMESTAMP}'
-VIDEO_PATH = "../videos/clean_video_2025-09-24_16-09-15.avi"
+VIDEO_PATH = r"C:\Users\orifr\OneDrive - Technion\Documents\semester_f\project\drone_project_archives\Archive\clean_video_2025-10-17_17-25-20.avi"
 MAX_RECENT_EXTRACTIONS = 20
 THRESHOLD_BEST_MATCH = 1200
 
@@ -60,11 +71,12 @@ def extract_person_from_frame(results, target_id, original_frame, frame_number):
 def extract_all_visible_persons(results, original_frame):
 	# ... (your function is fine, no changes needed here, just removed unused frame_number)
 	if results[0].boxes is None or results[0].boxes.id is None or results[0].masks is None:
-		return {}
+		return {}, {}
 	track_ids = results[0].boxes.id.int().cpu().tolist()
 	all_masks = results[0].masks
 	all_boxes = results[0].boxes.xyxy.cpu().numpy().astype(int)
 	extracted_persons_dict = {}
+	extracted_persons_centers_dict = {}
 	for i in range(len(track_ids)):
 		current_id = track_ids[i]
 		mask = all_masks[i]
@@ -74,7 +86,10 @@ def extract_all_visible_persons(results, original_frame):
 		cropped_person = extracted_person[y1:y2, x1:x2]
 		if cropped_person.size > 0:
 			extracted_persons_dict[current_id] = cropped_person
-	return extracted_persons_dict
+			center_x = int((x1 + x2) / 2)
+			center_y = int((y1 + y2) / 2)
+			extracted_persons_centers_dict[current_id] = (center_x, center_y)
+	return extracted_persons_dict, extracted_persons_centers_dict
 
 
 def update_persons_dict(all_persons_in_frame, persons_dict, max_extractions):
@@ -109,24 +124,48 @@ def save_all_persons(persons_dict, base_output_folder):
 	logger.info("All images saved successfully.")
 
 
-def find_best_match(other_persons_dict, selected_id_templates):
-	# ... (your function is fine, no changes needed)
+def get_distance_penalty(center1, center2):
+    """
+    Calculates an exponential penalty based on the Euclidean distance between two centers.
+    Penalty is in the range 0 to 10000.
+    """
+    if center1 is None or center2 is None:
+        return 0
+    distance = np.linalg.norm(np.array(center1) - np.array(center2))
+    # Scale and exponentiate: adjust alpha for sensitivity
+    alpha = 0.001  # Tune this value for desired curve
+    penalty = int(10000 * (1 - np.exp(-alpha * distance)))
+    return penalty
+
+def find_best_match(other_persons_dict, selected_id_templates, selected_id_last_center, all_persons_centers_dict):
 	logger.info(f"[TEMPLATE_MATCHING] Starting match with {len(selected_id_templates)} templates against {len(other_persons_dict)} persons")
 	logger.info(f"[TEMPLATE_MATCHING] Using threshold: {THRESHOLD_BEST_MATCH}")
-	
+
 	min_score = -1
 	min_id = -1
 	all_scores = {}  # Store all scores for debugging
 	detailed_scores = {}  # Store individual template scores for each ID
 	
 	for id, extracted_image in other_persons_dict.items():
-		current_scores = [template_match_file.template_match(template, extracted_image) for template in selected_id_templates]
+		# Assume each extracted_image is a dict: {'image': img}
+		if isinstance(extracted_image, dict):
+			candidate_img = extracted_image.get('image')
+			candidate_center = extracted_image.get('center')
+		else:
+			candidate_img = extracted_image
+			candidate_center = None
+		# Calculate penalty
+		candidate_center = all_persons_centers_dict[id]
+		current_penalty = get_distance_penalty(candidate_center, selected_id_last_center)
+		current_scores = [	template_match_file.template_match(template, candidate_img) + current_penalty
+							for template in selected_id_templates]
 		current_score = min(current_scores)
 		
 		# Store detailed information
 		all_scores[id] = current_score
 		detailed_scores[id] = {
 			'best_score': current_score,
+			'penalty_score': current_penalty,
 			'all_template_scores': current_scores,
 			'worst_score': max(current_scores),
 			'avg_score': sum(current_scores) / len(current_scores)
@@ -137,13 +176,13 @@ def find_best_match(other_persons_dict, selected_id_templates):
 			min_id = id
 	
 	# Log detailed score analysis
-	logger.debug(f"[TEMPLATE_MATCHING] === DETAILED SCORE ANALYSIS ===")
+	logger.info(f"[TEMPLATE_MATCHING] === DETAILED SCORE ANALYSIS ===")
 	for id in sorted(all_scores.keys()):
 		scores_info = detailed_scores[id]
-		logger.debug(f"[TEMPLATE_MATCHING] ID {id:2d}: BEST={scores_info['best_score']:6.1f} | AVG={scores_info['avg_score']:6.1f} | WORST={scores_info['worst_score']:6.1f}")
+		logger.info(f"[TEMPLATE_MATCHING] ID {id:2d}: BEST={scores_info['best_score']:6.1f} | AVG={scores_info['avg_score']:6.1f} | WORST={scores_info['worst_score']:6.1f} | PENALTY={scores_info['penalty_score']:6.1f}")
 		# Log first few individual scores to see the range
 		sample_scores = scores_info['all_template_scores'][:5]  # Show first 5 template scores
-		logger.debug(f"[TEMPLATE_MATCHING]      Sample scores: {[f'{s:.1f}' for s in sample_scores]}")
+		logger.info(f"[TEMPLATE_MATCHING]      Sample scores: {[f'{s:.1f}' for s in sample_scores]}")
 	
 	logger.info(f"[TEMPLATE_MATCHING] === SUMMARY ===")
 	logger.info(f"[TEMPLATE_MATCHING] All match scores (best): {all_scores}")
@@ -156,13 +195,13 @@ def find_best_match(other_persons_dict, selected_id_templates):
 		logger.info(f"[TEMPLATE_MATCHING] Margin: {margin:.1f} ({'PASS' if margin >= 0 else 'FAIL'})")
 		
 		if min_score <= THRESHOLD_BEST_MATCH:
-			logger.info(f"[TEMPLATE_MATCHING] ✅ MATCH ACCEPTED: Score {min_score:.1f} <= threshold {THRESHOLD_BEST_MATCH}")
+			logger.info(f"[TEMPLATE_MATCHING] MATCH ACCEPTED: Score {min_score:.1f} <= threshold {THRESHOLD_BEST_MATCH}")
 			return min_id
 		else:
-			logger.info(f"[TEMPLATE_MATCHING] ❌ MATCH REJECTED: Score {min_score:.1f} > threshold {THRESHOLD_BEST_MATCH}")
-			logger.info(f"[TEMPLATE_MATCHING] 💡 SUGGESTION: Consider threshold >= {min_score + 100:.0f} to accept this match")
+			logger.info(f"[TEMPLATE_MATCHING] MATCH REJECTED: Score {min_score:.1f} > threshold {THRESHOLD_BEST_MATCH}")
+			logger.info(f"[TEMPLATE_MATCHING] SUGGESTION: Consider threshold >= {min_score + 100:.0f} to accept this match")
 	else:
-		logger.info(f"[TEMPLATE_MATCHING] ❌ NO CANDIDATES FOUND")
+		logger.info(f"[TEMPLATE_MATCHING] NO CANDIDATES FOUND")
 	
 	return -1
 
@@ -174,7 +213,7 @@ def display_video_frame_by_frame():
 	"""
 	# This is the specific person we might want to re-identify if lost.
 	# The data collection happens for everyone regardless.
-	selected_id_to_track = 1
+	selected_id_to_track = 24
 
 	if not os.path.isfile(VIDEO_PATH):
 		logger.error(f"Video file not found at: {VIDEO_PATH}")
@@ -188,7 +227,7 @@ def display_video_frame_by_frame():
 	logger.info("Video opened successfully. Press 'q' to quit.")
 	model = YOLO("../yolo_models/yolo11s-seg.pt")
 	frame_number = 0
-
+	last_seen_center_id_to_track = None
 	try:
 		while True:
 			success, frame = video.read()
@@ -200,8 +239,11 @@ def display_video_frame_by_frame():
 			
 			# --- CORE LOGIC ---
 			# 1. Extract all persons visible in the current frame.
-			all_persons_in_frame = extract_all_visible_persons(results, frame)
+			all_persons_in_frame, all_persons_centers_dict = extract_all_visible_persons(results, frame)
 			
+			if(all_persons_centers_dict.get(selected_id_to_track) is not None):
+				last_seen_center_id_to_track = all_persons_centers_dict.get(selected_id_to_track)
+
 			# 2. Update our main data store with these new images.
 			if all_persons_in_frame:
 				update_persons_dict(all_persons_in_frame, persons_dict, MAX_RECENT_EXTRACTIONS)
@@ -213,9 +255,10 @@ def display_video_frame_by_frame():
 				templates = persons_dict.get(selected_id_to_track, [])
 				
 				# Only search if we have templates and there are other people to check
-				if templates and all_persons_in_frame:
+				if templates and all_persons_in_frame and last_seen_center_id_to_track :
 					logger.warning(f"Target ID {selected_id_to_track} lost. Attempting to re-acquire...")
-					replacement_id = find_best_match(all_persons_in_frame, templates)
+					#there is error with the key here, need to add additional checks and print statements
+					replacement_id = find_best_match(all_persons_in_frame, templates, last_seen_center_id_to_track ,all_persons_centers_dict)
 					if replacement_id != -1:
 						logger.info(f"✓ Re-acquired target! Old ID: {selected_id_to_track}, New ID: {replacement_id}")
 						selected_id_to_track = replacement_id
@@ -238,7 +281,6 @@ def display_video_frame_by_frame():
 		cv2.destroyAllWindows()
 		# Use the new save function to save everything.
 		save_all_persons(persons_dict, PERSON_OUTPUT_FOLDER)
-
 
 if __name__ == "__main__":
 	display_video_frame_by_frame()

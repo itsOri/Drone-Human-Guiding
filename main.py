@@ -105,14 +105,17 @@ names:
   78: hair drier
   79: toothbrush
 
-remove backpack and umbrella from detection DONE
-dont put selected and target on cars DONE
-dont make template matching with diff type DONE
-put point on target id DONE
-check template matching on target id that it works 
-make clearer prompt for input of target and selected id DONE
-do logs also in a file , and check if it gets updated in live DONE`
-add penalty to template matching basded on distance from selected id
+- remove backpack and umbrella from detection DONE
+- dont put selected and target on cars DONE
+- dont make template matching with diff type DONE
+- put point on target id DONE
+- check template matching on target id that it works 
+- make clearer prompt for input of target and selected id DONE
+- do logs also in a file , and check if it gets updated in live DONE
+- add penalty to template matching basded on distance from selected id
+- stop working with dicts and start working with classes for better readability and maintainability
+- use cursor to improve code readability
+- fix RGB to BGR in videos
 """
 
 import cv2
@@ -127,6 +130,7 @@ import logging
 from datetime import datetime 
 from testsfolder import template_matching
 from testsfolder import RRTStar_New as rrt
+import subprocess
 
 #TODO change container to class
 TIMESTAMP = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -163,6 +167,7 @@ SAVE_FILE = True
 HISTEREZIS_ENABLED = True # Fixed hysteresis logic to prevent ping-pong behavior
 TARGET_TRACKING_ENABLED = True # Set to True to enable target selection and tracking logic
 
+
 # === PERFORMANCE OPTIMIZATION SETTINGS ===
 YOLO_FRAME_SKIP = 1  # Process every Nth frame (1=every frame, 2=every 2nd frame, 3=every 3rd frame)
 TEMPLATE_MATCHING_FRAME_SKIP = 1  # Update templates every Nth YOLO frame (reduces template collection frequency)
@@ -183,7 +188,7 @@ BLACK = (0, 0, 0)
 
 YAW_MOVING_VELOCITY = 15
 FB_MOVING_VELOCITY = 25
-DRONE_START_HEIGHT = 300 # 200 is good for outside, 70 for inside 
+DRONE_START_HEIGHT = 70 # 200 is good for outside, 70 for inside 
 MAX_LOST_ID_FRAMES = 20
 
 # === YOLO DETECTION CLASSES ===
@@ -193,7 +198,30 @@ BASE_CLASS_NAMES = {
     0: "person",
     2: "car"
 }
+#------
+NOTEPAD_PATH = r"C:\Program Files (x86)\Notepad++\notepad++.exe"
 
+#------- Functions -------#
+def open_log_in_editor(log_filename):
+    """
+    Opens the given log file in Notepad++ if available, otherwise falls back to Notepad.
+    """
+    powershell_cmd = f'powershell -NoExit -Command "Get-Content -Path \'{log_filename}\' -Tail 20 -Wait"'
+    if os.path.exists(NOTEPAD_PATH):
+        # try:
+        #     subprocess.Popen([NOTEPAD_PATH, log_filename])
+        #     logger.info(f"Opened log file in Notepad++: {log_filename}")
+        # except Exception as e:
+        #     logger.warning(f"Failed to open log in Notepad++: {e}")
+            # PowerShell command: show last 20 lines and follow the file
+        try:
+            subprocess.Popen(["start", "cmd", "/k", powershell_cmd], shell=True)
+            logger.info(f"Opened log tail terminal for: {log_filename}")
+        except Exception as e:
+            logger.warning(f"Failed to open log tail terminal: {e}")
+    else:
+        print("⚠️ Notepad++ not found, opening in Notepad.")
+        subprocess.Popen(["notepad.exe", log_filename])
 
 def RECT_TOP_LEFT():
     if(DYNAMIC_RECT is False): 
@@ -479,7 +507,7 @@ def get_target_id_in_frame(results, target_ids):
     logger.error("Error - target id not in frame (or not a person)")
     return None
 
-def find_id_in_frame(results, selected_id_container, persons_dict, all_persons_in_frame, exclude_ids=None):
+def find_id_in_frame(results, selected_id_container, persons_dict, all_persons_in_frame, all_persons_centers_dict, exclude_ids=None):
     """
     Checks if an ID is selected and processes tracking results to get coordinates.
     Stores the coordinates in selected_id_container["coords"] if found.
@@ -503,6 +531,8 @@ def find_id_in_frame(results, selected_id_container, persons_dict, all_persons_i
         selected_id_container["followed_id"] = None
     if "coords" not in selected_id_container:
         selected_id_container["coords"] = None
+    if "last_seen_coords" not in selected_id_container:
+        selected_id_container["last_seen_coords"] = None
     
     target_id = get_target_id_in_frame(results, selected_id_container["history"])
     logger.debug(f"Initial target_id from frame: {target_id}")
@@ -512,7 +542,7 @@ def find_id_in_frame(results, selected_id_container, persons_dict, all_persons_i
     if not target_id and selected_id_container["id_was_seen"]:
         logger.debug(f"Target not found in frame, attempting template matching...")
         # Keep the old followed_id for template matching, don't overwrite it yet
-        target_id = find_new_id(persons_dict, selected_id_container, all_persons_in_frame, exclude_ids)
+        target_id = find_new_id(persons_dict, selected_id_container, all_persons_in_frame,all_persons_centers_dict, exclude_ids)
         logger.debug(f"Template matching result: {target_id}")
 
     # Only update followed_id after template matching attempt
@@ -529,6 +559,7 @@ def find_id_in_frame(results, selected_id_container, persons_dict, all_persons_i
         is_id_found = True
         selected_id_container["id_was_seen"] = True
         selected_id_container["lost_counter"] = 0
+        selected_id_container["last_seen_coords"] = None
     elif selected_id_container["id_was_seen"] and selected_id_container["lost_counter"] < MAX_LOST_ID_FRAMES:
         selected_id_container["lost_counter"] += 1
         logger.info(f"Counter value: {selected_id_container['lost_counter']}")
@@ -539,6 +570,7 @@ def find_id_in_frame(results, selected_id_container, persons_dict, all_persons_i
         if not target_id:  # target_id is None, meaning template matching failed too
             selected_id_container["followed_id"] = None
         selected_id_container["id"] = []
+        selected_id_container["last_seen_coords"] = selected_id_container["coords"]
         selected_id_container["coords"] = None  # Clear coordinates when target is lost
         logger.info("[INPUT] Please enter a new ID to select.")
         is_id_found = False
@@ -923,7 +955,7 @@ def update_objects_dict(all_objects_in_frame, objects_dict, max_recent_extractio
             objects_dict[object_id] = objects_dict[object_id][-max_recent_extractions:]
 
 
-def find_new_id(template_dict, selected_id_container, all_objects_in_frame, exclude_ids=None):
+def find_new_id(template_dict, selected_id_container, all_objects_in_frame,all_persons_centers_dict, exclude_ids=None):
     """
     Find a new ID using template matching, excluding specified IDs.
     
@@ -936,11 +968,13 @@ def find_new_id(template_dict, selected_id_container, all_objects_in_frame, excl
     selected_id_to_track = selected_id_container["followed_id"]
     templates = template_dict.get(selected_id_to_track, [])
     replacement_id = -1
-    
+    selected_id_last_center = selected_id_container.get("last_seen_coords", None)
+
     if exclude_ids is None:
         exclude_ids = []
     
     logger.info(f"[TEMPLATE_MATCHING] Lost ID: {selected_id_to_track}")
+    logger.info(f"[TEMPLATE_MATCHING] Last center of lost ID: {selected_id_last_center}")
     logger.info(f"[TEMPLATE_MATCHING] Available templates: {len(templates)}")
     logger.info(f"[TEMPLATE_MATCHING] Current objects in frame: {list(all_objects_in_frame.keys()) if all_objects_in_frame else 'None'}")
     if exclude_ids:
@@ -973,7 +1007,7 @@ def find_new_id(template_dict, selected_id_container, all_objects_in_frame, excl
             logger.info(f"[TEMPLATE_MATCHING] No valid objects after excluding IDs {exclude_ids}")
             return None
         
-        replacement_id = template_matching.find_best_match(objects_for_matching, templates)
+        replacement_id = template_matching.find_best_match(objects_for_matching, templates, selected_id_last_center, all_persons_centers_dict)
         if replacement_id != -1:
             logger.info(f"✓ Re-acquired target! Old ID: {selected_id_to_track}, New ID: {replacement_id}")
             selected_id_container["followed_id"] = replacement_id
@@ -1186,6 +1220,9 @@ def main():
     print("="*60)
     print()
     
+    open_log_in_editor(LOG_FILENAME)
+
+
     logger.info("="*60)
     logger.info("DRONE CONTROL SYSTEM STARTED")
     logger.info(f"Timestamp: {TIMESTAMP}")
@@ -1301,7 +1338,8 @@ def main():
                     
                     # Extract all persons visible in the current frame (for both following and target tracking)
                     # Only persons (class 0) are used for template matching
-                    all_persons_in_frame = template_matching.extract_all_visible_persons(results, frame)
+                    # TODO: all_persons_in_frame should be a class that will contain also centers for each person
+                    all_persons_in_frame, all_persons_centers_dict = template_matching.extract_all_visible_persons(results, frame)
                     
                     # Debug: Show extracted objects
                     if all_persons_in_frame:
@@ -1320,10 +1358,12 @@ def main():
                 else:
                     # Use empty dictionary when not updating templates
                     all_persons_in_frame = {}
+                    all_persons_centers_dict = {}
             else:
                 # Use last YOLO results and create annotated frame from original
                 results = last_yolo_results
                 all_persons_in_frame = {}
+                all_persons_centers_dict = {}
                 
                 # Draw previous detections on skipped frames if available
                 if results is not None and results[0].boxes is not None:
@@ -1350,12 +1390,12 @@ def main():
                     #follow target - now with template matching support
                     # Exclude selected ID history from target template matching
                     # Only use persons for template matching (persons_dict is used for both selected and target)
-                    is_target_found = find_id_in_frame(results, selected_target_container, persons_dict, all_persons_in_frame, 
+                    is_target_found = find_id_in_frame(results, selected_target_container, persons_dict, all_persons_in_frame, all_persons_centers_dict,
                                                        exclude_ids=selected_id_container["history"])
                 
                 # saves the coordinates in container IMPORTANT DONT COMMENT
                 # Exclude target ID history from selected template matching
-                is_id_found = find_id_in_frame(results, selected_id_container, persons_dict, all_persons_in_frame,
+                is_id_found = find_id_in_frame(results, selected_id_container, persons_dict, all_persons_in_frame, all_persons_centers_dict,
                                                exclude_ids=selected_target_container["history"])
                 # TODO: pivot to new function that will take care of scanning the potential target objects
 
@@ -1505,4 +1545,16 @@ def main():
 
 
 if __name__ == '__main__':
-    main()			
+    main()
+# GUI_RADIUS_SIZE=10
+# def draw_user_GUI(frame, center, color=(255, 0, 0), thickness=2):
+#     """
+#     Draws a circle on the given frame at the specified center with the given radius.
+#     Args:
+#         frame: The image/frame to draw on (numpy array)
+#         center: Tuple (x, y) for the center of the circle
+#         radius: Integer radius of the circle (global parameter)
+#         color: BGR color tuple (default blue)
+#         thickness: Thickness of the circle outline (default 2)
+#     """
+#     cv2.circle(frame, center, GUI_RADIUS_SIZE, color, thickness)
