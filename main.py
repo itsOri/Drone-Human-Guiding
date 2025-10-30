@@ -1451,7 +1451,10 @@ def main():
             # Draw frame addons with both selected ID (red) and target ID (green) points
             draw_frame_addons(annotated_frame, coords, target_coords)
 
-            cv2.imshow('Tello Video Feed', annotated_frame)
+            # cv2.imshow('Tello Video Feed', annotated_frame)
+            cv2.imshow('Tello Video Feed', cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
+            
+
             out_annotated.write(cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
             out_clean.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
             

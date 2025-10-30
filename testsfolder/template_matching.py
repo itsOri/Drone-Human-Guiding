@@ -124,6 +124,7 @@ def save_all_persons(persons_dict, base_output_folder):
 		logger.info(f"  > Saving {len(image_list)} images for Person ID {person_id}...")
 		for i, img in enumerate(image_list):
 			filename = os.path.join(person_folder, f"capture_{i+1}.png")
+			# Images are already in BGR format (extracted from OpenCV frame), so save directly
 			cv2.imwrite(filename, img)
 	logger.info("All images saved successfully.")
 
@@ -239,10 +240,12 @@ def display_video_frame_by_frame():
 				logger.info("Reached the end of the video.")
 				break
 
+			# YOLO automatically converts BGR to RGB internally, so pass the frame as-is
 			results = model.track(frame, persist=True, verbose=False, tracker="bytetrack.yaml", classes=[0])
 			
 			# --- CORE LOGIC ---
 			# 1. Extract all persons visible in the current frame.
+			# Extract from the original BGR frame
 			all_persons_in_frame, all_persons_centers_dict = extract_all_visible_persons(results, frame)
 			
 			if(all_persons_centers_dict.get(selected_id_to_track) is not None):
@@ -269,7 +272,8 @@ def display_video_frame_by_frame():
 			# --- END OF RE-ID LOGIC ---
 
 			annotated_frame = results[0].plot()
-			cv2.imshow('Tello Video Feed', annotated_frame)
+			# results[0].plot() returns RGB format, need to convert to BGR for cv2.imshow
+			cv2.imshow('Tello Video Feed', cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
 			frame_number += 1
 
 			if cv2.waitKey(1) & 0xFF == ord('q'):
