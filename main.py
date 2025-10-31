@@ -195,6 +195,7 @@ YAW_MOVING_VELOCITY = 4
 FB_MOVING_VELOCITY = 15
 DRONE_START_HEIGHT = 450 # 200 is good for outside, 70 for inside 
 MAX_LOST_ID_FRAMES = 20
+COORDINATE_HISTORY_SIZE = 30  # Number of frames to keep coordinate history for tracked persons
 
 # === YOLO DETECTION CLASSES ===
 # Always detect these classes
@@ -539,6 +540,8 @@ def find_id_in_frame(results, selected_id_container, persons_dict, all_persons_i
         selected_id_container["coords"] = None
     if "last_seen_coords" not in selected_id_container:
         selected_id_container["last_seen_coords"] = None
+    if "center_history" not in selected_id_container:
+        selected_id_container["center_history"] = []
     
     target_id = get_target_id_in_frame(results, selected_id_container["history"])
     logger.debug(f"Initial target_id from frame: {target_id}")
@@ -557,10 +560,18 @@ def find_id_in_frame(results, selected_id_container, persons_dict, all_persons_i
     selected_id_container["followed_id"] = target_id
     coords = get_coordinates_by_id(results, target_id)
     
+    # if id is found -> we have coords of this person
     if coords:
         selected_id_container["coords"] = coords  # Store or update the coordinates
         x1, y1, x2, y2, center_x, center_y = coords
         logger.info(f"Frame: Found ID {target_id} at ({x1}, {y1}), ({x2}, {y2}), center: ({center_x}, {center_y})")
+        
+        # Update coordinate history
+        selected_id_container["center_history"].append((center_x, center_y))
+        # Keep only the last COORDINATE_HISTORY_SIZE frames
+        if len(selected_id_container["center_history"]) > COORDINATE_HISTORY_SIZE:
+            selected_id_container["center_history"].pop(0)
+        
         # You can add more logic here (e.g., draw something special or send commands)
         is_id_found = True
         selected_id_container["id_was_seen"] = True
@@ -1018,6 +1029,9 @@ def find_new_id(template_dict, selected_id_container, all_objects_in_frame,all_p
             logger.info(f"✓ Re-acquired target! Old ID: {selected_id_to_track}, New ID: {replacement_id}")
             selected_id_container["followed_id"] = replacement_id
             selected_id_container["history"].append(replacement_id)
+            # Reset coordinate history when finding a new match via template matching
+            selected_id_container["center_history"] = []
+            logger.info(f"[TEMPLATE_MATCHING] Reset coordinate history for new ID {replacement_id}")
             return replacement_id
         else:
             logger.info(f"[TEMPLATE_MATCHING] ❌ No suitable match found (all scores above threshold)")
@@ -1246,7 +1260,8 @@ def main():
         "id_was_seen": False, 
         "lost_counter": 0, 
         "followed_id": None, 
-        "coords": None
+        "coords": None,
+        "center_history": []  # History of (center_x, center_y) for the last COORDINATE_HISTORY_SIZE frames
     }
     selected_target_container = {
         "id": [],  # Target uses list like selected_id for consistency
@@ -1255,7 +1270,8 @@ def main():
         "lost_counter": 0, 
         "followed_id": None, 
         "coords": None,
-        "target_class": None  # Will be set once we identify the target object type
+        "target_class": None,  # Will be set once we identify the target object type
+        "center_history": []  # History of (center_x, center_y) for the last COORDINATE_HISTORY_SIZE frames
     }
 
     persons_dict = {}  # Template dictionary for persons (used for both following and target tracking)
@@ -1295,6 +1311,7 @@ def main():
     
     logger.info(f"[OPTIMIZATION] YOLO processing every {YOLO_FRAME_SKIP} frames")
     logger.info(f"[OPTIMIZATION] Template matching every {TEMPLATE_MATCHING_FRAME_SKIP} YOLO frames")
+    logger.info(f"[TRACKING] Coordinate history size: {COORDINATE_HISTORY_SIZE} frames")
     if ENABLE_RRT_PATH:
         logger.info(f"[RRT*] Path planning enabled (threaded, async, every {RRT_FRAME_SKIP} frames)")
     
