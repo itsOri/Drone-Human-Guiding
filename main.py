@@ -142,15 +142,20 @@ OUTPUT_ANNOTATED_FILENAME = os.path.join(VIDEOS_DIR, f'annotated_video_{TIMESTAM
 OUTPUT_BW_SEGMENTED_FILENAME = os.path.join(VIDEOS_DIR, f'black_white_segmented_{TIMESTAMP}.avi')
 LOG_FILENAME = os.path.join(VIDEOS_DIR, f'drone_log_{TIMESTAMP}.log')
 
-# Configure logging
+# Configure logging - this will be used by all modules including template_matching
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler(LOG_FILENAME),
-    ]
+    ],
+    force=True  # Override any existing logging configuration
 )
 logger = logging.getLogger(__name__)
+
+# Ensure template_matching module logs are also captured
+logging.getLogger('testsfolder.template_matching').setLevel(logging.INFO)
+logging.getLogger('template_matching').setLevel(logging.INFO)
 
 
 WIDTH = 640
@@ -158,7 +163,7 @@ HEIGHT = 480
 selected_id = None
 
 RECT_CENTER = (WIDTH // 2, HEIGHT // 2 + 120)
-rect_size = {"w": 100, "h": 100}
+rect_size = {"w": 70, "h": 70}
 MIN_RECT_SIZE = 50
 CONST_RECT_TOP_LEFT = (RECT_CENTER[0] - rect_size['w'] // 2, RECT_CENTER[1] - rect_size['h'] // 2)
 CONST_RECT_BOTTOM_RIGHT = (RECT_CENTER[0] + rect_size['w'] // 2, RECT_CENTER[1] + rect_size['h'] // 2)
@@ -186,9 +191,9 @@ RRT_PATH_COLOR = (255, 0, 255)  # Magenta/Purple color for path (BGR)
 
 BLACK = (0, 0, 0)
 
-YAW_MOVING_VELOCITY = 15
-FB_MOVING_VELOCITY = 25
-DRONE_START_HEIGHT = 70 # 200 is good for outside, 70 for inside 
+YAW_MOVING_VELOCITY = 4
+FB_MOVING_VELOCITY = 15
+DRONE_START_HEIGHT = 450 # 200 is good for outside, 70 for inside 
 MAX_LOST_ID_FRAMES = 20
 
 # === YOLO DETECTION CLASSES ===
@@ -206,6 +211,7 @@ def open_log_in_editor(log_filename):
     """
     Opens the given log file in Notepad++ if available, otherwise falls back to Notepad.
     """
+    return
     powershell_cmd = f'powershell -NoExit -Command "Get-Content -Path \'{log_filename}\' -Tail 20 -Wait"'
     if os.path.exists(NOTEPAD_PATH):
         # try:
@@ -624,7 +630,7 @@ def control_drone(drone, coords, frame, histerezis_enabled, histerezis_on):
     
     if histerezis_enabled:
         # Forward movement logic with hysteresis
-        if center_y < RECT_TOP_LEFT()[1] - hysteresis_margin or histerezis_on["up"]:
+        if center_y < RECT_TOP_LEFT()[1] or histerezis_on["up"]:
             if center_y < RECT_TOP_LEFT()[1] + hysteresis_margin:  # Continue until well inside
                 cv2.putText(frame, "FORWARD", 
                             (RECT_TOP_LEFT()[0] + 20, RECT_TOP_LEFT()[1] - 20), 
@@ -636,7 +642,7 @@ def control_drone(drone, coords, frame, histerezis_enabled, histerezis_on):
                 histerezis_on["up"] = False
                 drone.for_back_velocity = 0
         # Backward movement logic with hysteresis
-        elif center_y > RECT_BOTTOM_RIGHT()[1] + hysteresis_margin or histerezis_on["down"]:
+        elif center_y > RECT_BOTTOM_RIGHT()[1] or histerezis_on["down"]:
             if center_y > RECT_BOTTOM_RIGHT()[1] - hysteresis_margin:  # Continue until well inside
                 cv2.putText(frame, "BACKWARD", 
                             (RECT_TOP_LEFT()[0] + 20, RECT_TOP_LEFT()[1] - 20), 
@@ -672,7 +678,7 @@ def control_drone(drone, coords, frame, histerezis_enabled, histerezis_on):
     
     if histerezis_enabled:
         # Left rotation logic with hysteresis
-        if center_x < RECT_TOP_LEFT()[0] - hysteresis_margin_x or histerezis_on["left"]:
+        if center_x < RECT_TOP_LEFT()[0] or histerezis_on["left"]:
             if center_x < RECT_TOP_LEFT()[0] + hysteresis_margin_x:  # Continue until well inside
                 cv2.putText(frame, "<- ROTATE LEFT <-",
                     (RECT_TOP_LEFT()[0] - 110, (RECT_TOP_LEFT()[1] + RECT_BOTTOM_RIGHT()[1]) // 2),
@@ -684,7 +690,7 @@ def control_drone(drone, coords, frame, histerezis_enabled, histerezis_on):
                 histerezis_on["left"] = False
                 drone.yaw_velocity = 0
         # Right rotation logic with hysteresis
-        elif center_x > RECT_BOTTOM_RIGHT()[0] + hysteresis_margin_x or histerezis_on["right"]:
+        elif center_x > RECT_BOTTOM_RIGHT()[0] or histerezis_on["right"]:
             if center_x > RECT_BOTTOM_RIGHT()[0] - hysteresis_margin_x:  # Continue until well inside
                 cv2.putText(frame, "-> ROTATE RIGHT ->",
                             (RECT_BOTTOM_RIGHT()[0] + 20, (RECT_TOP_LEFT()[1] + RECT_BOTTOM_RIGHT()[1]) // 2),
