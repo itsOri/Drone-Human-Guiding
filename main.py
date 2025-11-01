@@ -502,15 +502,21 @@ def get_target_id_in_frame(results, target_ids):
     logger.info(f"ids_in_frame: {ids_in_frame}")
     logger.info(f"target: {target_ids}")
     
+    # ids detected that are in target ids
+    ids_detected = []
     # Only allow person IDs (class 0)
     for box in results[0].boxes:
         if hasattr(box, 'id') and box.id is not None:
             box_id = int(box.id.item()) if hasattr(box.id, 'item') else int(box.id)
+
             if box_id in target_ids:
                 # Check if it's a person (class 0)
                 class_id = int(box.cls.item())
                 if class_id == 0:
-                    return box_id
+                    ids_detected.append(box_id)
+    
+    if len(ids_detected) > 0:
+        return min(ids_detected)
     
     logger.error("Error - target id not in frame (or not a person)")
     return None
