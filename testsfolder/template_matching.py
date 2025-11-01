@@ -28,7 +28,7 @@ except ImportError:
 # --- GLOBAL CONSTANTS & CONFIGURATION ---
 PERSON_OUTPUT_FOLDER = f'./persons_data_{datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}'
 #VIDEO_PATH = r"C:\Users\orifr\OneDrive - Technion\Documents\semester_f\project\drone_project_archives\Archive\clean_video_2025-10-17_17-25-20.avi"
-VIDEO_PATH = "../videos/clean_video_2025-10-30_17-03-09.avi"
+VIDEO_PATH = "../videos/clean_video_2025-10-31_12-56-59.avi"
 
 MAX_RECENT_EXTRACTIONS = 20
 THRESHOLD_BEST_MATCH = 1200
@@ -162,7 +162,7 @@ def get_distance_penalty(center1, center2):
         return 0
     distance = np.linalg.norm(np.array(center1) - np.array(center2))
     # Scale and exponentiate: adjust alpha for sensitivity
-    alpha = 0.001  # Tune this value for desired curve
+    alpha = 0.002  # Tune this value for desired curve
     penalty = int(10000 * (1 - np.exp(-alpha * distance)))
     return penalty
 
@@ -240,9 +240,10 @@ def display_video_frame_by_frame():
 	Opens a video, tracks all persons, stores their image histories,
 	and saves them at the end.
 	"""
+
 	# This is the specific person we might want to re-identify if lost.
 	# The data collection happens for everyone regardless.
-	selected_id_to_track = 1
+	selected_id_to_track = 17
 
 	if not os.path.isfile(VIDEO_PATH):
 		logger.error(f"Video file not found at: {VIDEO_PATH}")
