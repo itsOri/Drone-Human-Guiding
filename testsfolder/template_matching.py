@@ -7,16 +7,8 @@ import logging
 import subprocess
 
 # Get logger from main module (will use main's configuration)
-TIMESTAMP = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-VIDEOS_DIR = "videos"
-LOG_FILENAME = os.path.join(VIDEOS_DIR, f'drone_log_{TIMESTAMP}.log')
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(LOG_FILENAME),
-    ]
-)
+# When imported from main.py, this will use the root logger configured in main
+# When run standalone, it will create its own logger
 logger = logging.getLogger(__name__)
 
 try:
@@ -34,9 +26,10 @@ except ImportError:
         import template_matching_function as template_match_file
 
 # --- GLOBAL CONSTANTS & CONFIGURATION ---
-TIMESTAMP = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-PERSON_OUTPUT_FOLDER = f'./persons_data_{TIMESTAMP}'
-VIDEO_PATH = r"C:\Users\orifr\OneDrive - Technion\Documents\semester_f\project\drone_project_archives\Archive\clean_video_2025-10-17_17-25-20.avi"
+PERSON_OUTPUT_FOLDER = f'./persons_data_{datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}'
+#VIDEO_PATH = r"C:\Users\orifr\OneDrive - Technion\Documents\semester_f\project\drone_project_archives\Archive\clean_video_2025-10-17_17-25-20.avi"
+VIDEO_PATH = "../videos/clean_video_2025-10-31_12-56-59.avi"
+
 MAX_RECENT_EXTRACTIONS = 20
 THRESHOLD_BEST_MATCH = 1200
 
@@ -47,16 +40,30 @@ persons_dict = {}
 
 # (extract_person_from_frame function can be removed if not used elsewhere, but we'll keep it for now)
 def extract_person_from_frame(results, target_id, original_frame, frame_number):
-	# ... (your function is fine, no changes needed)
+	"""
+	Extract a specific person (class 0 only) from frame by ID.
+	Returns None if ID not found, not a person, or extraction fails.
+	"""
 	if results[0].boxes is None or results[0].boxes.id is None:
 		return None
+	
 	track_ids = results[0].boxes.id.int().cpu().tolist()
 	if target_id not in track_ids:
 		return None
+	
 	person_index = track_ids.index(target_id)
+	
+	# Check if this is a person (class 0)
+	if results[0].boxes.cls is not None:
+		class_ids = results[0].boxes.cls.int().cpu().tolist()
+		if class_ids[person_index] != 0:
+			logger.warning(f"ID {target_id} is not a person (class {class_ids[person_index]}), skipping extraction.")
+			return None
+	
 	if results[0].masks is None:
 		logger.warning(f"No masks found for frame {frame_number}, cannot extract person.")
 		return None
+	
 	mask = results[0].masks[person_index]
 	binary_mask = mask.data[0].cpu().numpy().astype("uint8")
 	extracted_person = cv2.bitwise_and(original_frame, original_frame, mask=binary_mask)
@@ -69,16 +76,36 @@ def extract_person_from_frame(results, target_id, original_frame, frame_number):
 
 
 def extract_all_visible_persons(results, original_frame):
-	# ... (your function is fine, no changes needed here, just removed unused frame_number)
+	"""
+	Extract all visible persons (class 0 only) from the current frame for template matching.
+	Cars and other objects are NOT extracted.
+	
+	Returns:
+		extracted_persons_dict: {person_id: cropped_image}
+		extracted_persons_centers_dict: {person_id: (center_x, center_y)}
+	"""
 	if results[0].boxes is None or results[0].boxes.id is None or results[0].masks is None:
 		return {}, {}
+	
+	# Get class IDs to filter for persons only
+	if results[0].boxes.cls is None:
+		return {}, {}
+	
 	track_ids = results[0].boxes.id.int().cpu().tolist()
+	class_ids = results[0].boxes.cls.int().cpu().tolist()
 	all_masks = results[0].masks
 	all_boxes = results[0].boxes.xyxy.cpu().numpy().astype(int)
 	extracted_persons_dict = {}
 	extracted_persons_centers_dict = {}
+	
 	for i in range(len(track_ids)):
 		current_id = track_ids[i]
+		class_id = class_ids[i]
+		
+		# Only extract persons (class 0) for template matching
+		if class_id != 0:
+			continue
+		
 		mask = all_masks[i]
 		binary_mask = mask.data[0].cpu().numpy().astype("uint8")
 		extracted_person = cv2.bitwise_and(original_frame, original_frame, mask=binary_mask)
@@ -89,6 +116,7 @@ def extract_all_visible_persons(results, original_frame):
 			center_x = int((x1 + x2) / 2)
 			center_y = int((y1 + y2) / 2)
 			extracted_persons_centers_dict[current_id] = (center_x, center_y)
+	
 	return extracted_persons_dict, extracted_persons_centers_dict
 
 
@@ -120,6 +148,7 @@ def save_all_persons(persons_dict, base_output_folder):
 		logger.info(f"  > Saving {len(image_list)} images for Person ID {person_id}...")
 		for i, img in enumerate(image_list):
 			filename = os.path.join(person_folder, f"capture_{i+1}.png")
+			# Images are already in BGR format (extracted from OpenCV frame), so save directly
 			cv2.imwrite(filename, img)
 	logger.info("All images saved successfully.")
 
@@ -133,12 +162,12 @@ def get_distance_penalty(center1, center2):
         return 0
     distance = np.linalg.norm(np.array(center1) - np.array(center2))
     # Scale and exponentiate: adjust alpha for sensitivity
-    alpha = 0.001  # Tune this value for desired curve
+    alpha = 0.002  # Tune this value for desired curve
     penalty = int(10000 * (1 - np.exp(-alpha * distance)))
     return penalty
 
 def find_best_match(other_persons_dict, selected_id_templates, selected_id_last_center, all_persons_centers_dict):
-	logger.info(f"[TEMPLATE_MATCHING] Starting match with {len(selected_id_templates)} templates against {len(other_persons_dict)} persons")
+	logger.info(f"[TEMPLATE_MATCHING] Starting match with {len(selected_id_templates)} templates against {len(other_persons_dict)} persons (class 0 only)")
 	logger.info(f"[TEMPLATE_MATCHING] Using threshold: {THRESHOLD_BEST_MATCH}")
 
 	min_score = -1
@@ -211,9 +240,10 @@ def display_video_frame_by_frame():
 	Opens a video, tracks all persons, stores their image histories,
 	and saves them at the end.
 	"""
+
 	# This is the specific person we might want to re-identify if lost.
 	# The data collection happens for everyone regardless.
-	selected_id_to_track = 24
+	selected_id_to_track = 17
 
 	if not os.path.isfile(VIDEO_PATH):
 		logger.error(f"Video file not found at: {VIDEO_PATH}")
@@ -235,10 +265,12 @@ def display_video_frame_by_frame():
 				logger.info("Reached the end of the video.")
 				break
 
+			# YOLO automatically converts BGR to RGB internally, so pass the frame as-is
 			results = model.track(frame, persist=True, verbose=False, tracker="bytetrack.yaml", classes=[0])
 			
 			# --- CORE LOGIC ---
 			# 1. Extract all persons visible in the current frame.
+			# Extract from the original BGR frame
 			all_persons_in_frame, all_persons_centers_dict = extract_all_visible_persons(results, frame)
 			
 			if(all_persons_centers_dict.get(selected_id_to_track) is not None):
@@ -265,7 +297,8 @@ def display_video_frame_by_frame():
 			# --- END OF RE-ID LOGIC ---
 
 			annotated_frame = results[0].plot()
-			cv2.imshow('Tello Video Feed', annotated_frame)
+			# results[0].plot() returns RGB format, need to convert to BGR for cv2.imshow
+			cv2.imshow('Tello Video Feed', cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
 			frame_number += 1
 
 			if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -282,5 +315,23 @@ def display_video_frame_by_frame():
 		# Use the new save function to save everything.
 		save_all_persons(persons_dict, PERSON_OUTPUT_FOLDER)
 
+def setup_standalone_logging():
+	"""Setup logging when running template_matching.py standalone (not from main.py)"""
+	timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+	project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+	videos_dir = os.path.join(project_root, "videos")
+	log_filename = os.path.join(videos_dir, f'template_matching_log_{timestamp}.log')
+	
+	logging.basicConfig(
+		level=logging.INFO,
+		format='%(asctime)s - %(levelname)s - %(message)s',
+		handlers=[
+			logging.FileHandler(log_filename),
+		]
+	)
+	logger.info(f"Template matching standalone mode - Log file: {log_filename}")
+	print(f"Log file: {log_filename}")  # Print to console only for standalone mode
+
 if __name__ == "__main__":
+	setup_standalone_logging()
 	display_video_frame_by_frame()

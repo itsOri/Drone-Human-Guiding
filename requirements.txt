@@ -5,3 +5,4 @@ matplotlib==3.9.3
 numpy==2.0.1
 ultralytics==8.3.129
 lap>=0.5.12
+filterpy>=1.4.5

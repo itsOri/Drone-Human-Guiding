@@ -130,6 +130,7 @@ import logging
 from datetime import datetime 
 from testsfolder import template_matching
 from testsfolder import RRTStar_New as rrt
+from testsfolder.kelman_implementation import predict_trajectory
 import subprocess
 
 #TODO change container to class
@@ -142,15 +143,20 @@ OUTPUT_ANNOTATED_FILENAME = os.path.join(VIDEOS_DIR, f'annotated_video_{TIMESTAM
 OUTPUT_BW_SEGMENTED_FILENAME = os.path.join(VIDEOS_DIR, f'black_white_segmented_{TIMESTAMP}.avi')
 LOG_FILENAME = os.path.join(VIDEOS_DIR, f'drone_log_{TIMESTAMP}.log')
 
-# Configure logging
+# Configure logging - this will be used by all modules including template_matching
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler(LOG_FILENAME),
-    ]
+    ],
+    force=True  # Override any existing logging configuration
 )
 logger = logging.getLogger(__name__)
+
+# Ensure template_matching module logs are also captured
+logging.getLogger('testsfolder.template_matching').setLevel(logging.INFO)
+logging.getLogger('template_matching').setLevel(logging.INFO)
 
 
 WIDTH = 640
@@ -158,7 +164,7 @@ HEIGHT = 480
 selected_id = None
 
 RECT_CENTER = (WIDTH // 2, HEIGHT // 2 + 120)
-rect_size = {"w": 100, "h": 100}
+rect_size = {"w": 70, "h": 70}
 MIN_RECT_SIZE = 50
 CONST_RECT_TOP_LEFT = (RECT_CENTER[0] - rect_size['w'] // 2, RECT_CENTER[1] - rect_size['h'] // 2)
 CONST_RECT_BOTTOM_RIGHT = (RECT_CENTER[0] + rect_size['w'] // 2, RECT_CENTER[1] + rect_size['h'] // 2)
@@ -186,10 +192,11 @@ RRT_PATH_COLOR = (255, 0, 255)  # Magenta/Purple color for path (BGR)
 
 BLACK = (0, 0, 0)
 
-YAW_MOVING_VELOCITY = 15
-FB_MOVING_VELOCITY = 25
-DRONE_START_HEIGHT = 70 # 200 is good for outside, 70 for inside 
+YAW_MOVING_VELOCITY = 4
+FB_MOVING_VELOCITY = 15
+DRONE_START_HEIGHT = 450 # 200 is good for outside, 70 for inside , 450 good outside
 MAX_LOST_ID_FRAMES = 20
+COORDINATE_HISTORY_SIZE = 30  # Number of frames to keep coordinate history for tracked persons
 
 # === YOLO DETECTION CLASSES ===
 # Always detect these classes
@@ -530,8 +537,12 @@ def find_id_in_frame(results, selected_id_container, persons_dict, all_persons_i
         selected_id_container["followed_id"] = None
     if "coords" not in selected_id_container:
         selected_id_container["coords"] = None
-    if "last_seen_coords" not in selected_id_container:
-        selected_id_container["last_seen_coords"] = None
+    if "last_seen_center_coords" not in selected_id_container:
+        selected_id_container["last_seen_center_coords"] = None
+    if "center_history" not in selected_id_container:
+        selected_id_container["center_history"] = []
+    if "predicted_trajectory" not in selected_id_container:
+        selected_id_container["predicted_trajectory"] = []
     
     target_id = get_target_id_in_frame(results, selected_id_container["history"])
     logger.debug(f"Initial target_id from frame: {target_id}")
@@ -550,18 +561,65 @@ def find_id_in_frame(results, selected_id_container, persons_dict, all_persons_i
     selected_id_container["followed_id"] = target_id
     coords = get_coordinates_by_id(results, target_id)
     
+    # if id is found -> we have coords of this person
     if coords:
         selected_id_container["coords"] = coords  # Store or update the coordinates
         x1, y1, x2, y2, center_x, center_y = coords
         logger.info(f"Frame: Found ID {target_id} at ({x1}, {y1}), ({x2}, {y2}), center: ({center_x}, {center_y})")
+        
+        # Update coordinate history
+        selected_id_container["center_history"].append((center_x, center_y))
+        # Keep only the last COORDINATE_HISTORY_SIZE frames
+        if len(selected_id_container["center_history"]) > COORDINATE_HISTORY_SIZE:
+            selected_id_container["center_history"].pop(0)
+        
         # You can add more logic here (e.g., draw something special or send commands)
         is_id_found = True
         selected_id_container["id_was_seen"] = True
         selected_id_container["lost_counter"] = 0
-        selected_id_container["last_seen_coords"] = None
+        selected_id_container["last_seen_center_coords"] = None
+        selected_id_container["predicted_trajectory"] = []  # Clear predictions when person is found
     elif selected_id_container["id_was_seen"] and selected_id_container["lost_counter"] < MAX_LOST_ID_FRAMES:
         selected_id_container["lost_counter"] += 1
         logger.info(f"Counter value: {selected_id_container['lost_counter']}")
+        
+        # Use Kalman filter prediction when person is lost
+        if selected_id_container["lost_counter"] == 1:
+            # First time person is lost - generate trajectory predictions
+            center_history = selected_id_container.get("center_history", [])
+            if center_history and len(center_history) > 0:
+                logger.info(f"[KALMAN] Generating trajectory prediction with {len(center_history)} historical points")
+                predicted_positions = predict_trajectory(center_history)
+                selected_id_container["predicted_trajectory"] = predicted_positions
+                
+                if predicted_positions:
+                    logger.info(f"[KALMAN] Generated {len(predicted_positions)} predicted positions")
+                else:
+                    logger.info(f"[KALMAN] Not enough history (need >5 frames), using last known position")
+            else:
+                logger.info(f"[KALMAN] No center history available for prediction")
+                selected_id_container["predicted_trajectory"] = []
+        
+        # Update last_seen_center_coords with predicted trajectory or last known position
+        if selected_id_container["predicted_trajectory"]:
+            # Pop the first predicted coordinate and use it
+            predicted_pos = selected_id_container["predicted_trajectory"].pop(0)
+            predicted_x, predicted_y = predicted_pos
+            # Store as (center_x, center_y) format for template matching
+            selected_id_container["last_seen_center_coords"] = (int(predicted_x), int(predicted_y))
+            logger.info(f"[KALMAN] Using predicted position: ({int(predicted_x)}, {int(predicted_y)}), {len(selected_id_container['predicted_trajectory'])} predictions remaining")
+        else:
+            # No predictions available, use last known coords from center_history
+            if selected_id_container["center_history"]:
+                # Use the last item in center_history - this is the last seen center
+                center_x, center_y = selected_id_container["center_history"][-1]
+                selected_id_container["last_seen_center_coords"] = (center_x, center_y)
+                logger.info(f"[KALMAN] No predictions available, using last known position from history: ({center_x}, {center_y})")
+            else:
+                # Edge case: no history and no predictions (person selected but never seen)
+                selected_id_container["last_seen_center_coords"] = None
+                logger.error(f"[KALMAN] No predictions and no center history available - template matching will fail")
+        
         is_id_found = True
     else:
         logger.warning(f"Frame: ID {target_id} not found in this frame.")
@@ -569,8 +627,21 @@ def find_id_in_frame(results, selected_id_container, persons_dict, all_persons_i
         if not target_id:  # target_id is None, meaning template matching failed too
             selected_id_container["followed_id"] = None
         selected_id_container["id"] = []
-        selected_id_container["last_seen_coords"] = selected_id_container["coords"]
+        
+        # Save last known or predicted position for final template matching attempt
+        if selected_id_container["predicted_trajectory"]:
+            predicted_pos = selected_id_container["predicted_trajectory"].pop(0)
+            predicted_x, predicted_y = predicted_pos
+            selected_id_container["last_seen_center_coords"] = (int(predicted_x), int(predicted_y))
+            logger.info(f"[KALMAN] Final attempt - using predicted position: ({int(predicted_x)}, {int(predicted_y)})")
+        elif selected_id_container["center_history"]:
+            # Use last item from center_history instead of coords
+            center_x, center_y = selected_id_container["center_history"][-1]
+            selected_id_container["last_seen_center_coords"] = (center_x, center_y)
+            logger.info(f"[KALMAN] Final attempt - using last known position from history: ({center_x}, {center_y})")
+        
         selected_id_container["coords"] = None  # Clear coordinates when target is lost
+        selected_id_container["predicted_trajectory"] = []  # Clear any remaining predictions
         logger.info("[INPUT] Please enter a new ID to select.")
         is_id_found = False
     
@@ -582,7 +653,7 @@ def is_alive(thread):
     return thread.is_alive()
 
 
-def draw_frame_addons(annotated_frame, coords, target_coords=None):
+def draw_frame_addons(annotated_frame, coords, target_coords=None, selected_last_seen=None, target_last_seen=None):
     # Draw rectangle
     cv2.rectangle(annotated_frame, RECT_TOP_LEFT(), RECT_BOTTOM_RIGHT(), (0, 0, 255), 2)
     
@@ -590,11 +661,23 @@ def draw_frame_addons(annotated_frame, coords, target_coords=None):
         x1, y1, x2, y2, center_x, center_y = coords
         # Draw red point at selected ID coords
         cv2.circle(annotated_frame, (center_x, center_y), radius=3, color=(0, 0, 255), thickness=-1)
+    elif selected_last_seen is not None:
+        # Draw yellow point at last seen position when selected person is lost
+        center_x, center_y = selected_last_seen
+        cv2.circle(annotated_frame, (center_x, center_y), radius=5, color=(0, 255, 255), thickness=-1)
+        cv2.putText(annotated_frame, "LOST", (center_x + 10, center_y - 10), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
     
     if(target_coords != None):
         x1, y1, x2, y2, target_center_x, target_center_y = target_coords
         # Draw green point at target ID coords
         cv2.circle(annotated_frame, (target_center_x, target_center_y), radius=3, color=(0, 255, 0), thickness=-1)
+    elif target_last_seen is not None:
+        # Draw cyan point at last seen position when target person is lost
+        target_center_x, target_center_y = target_last_seen
+        cv2.circle(annotated_frame, (target_center_x, target_center_y), radius=5, color=(255, 255, 0), thickness=-1)
+        cv2.putText(annotated_frame, "TARGET LOST", (target_center_x + 10, target_center_y - 10), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
 
 
 def reset_hysteresis(histerezis_on):
@@ -623,7 +706,7 @@ def control_drone(drone, coords, frame, histerezis_enabled, histerezis_on):
     
     if histerezis_enabled:
         # Forward movement logic with hysteresis
-        if center_y < RECT_TOP_LEFT()[1] - hysteresis_margin or histerezis_on["up"]:
+        if center_y < RECT_TOP_LEFT()[1] or histerezis_on["up"]:
             if center_y < RECT_TOP_LEFT()[1] + hysteresis_margin:  # Continue until well inside
                 cv2.putText(frame, "FORWARD", 
                             (RECT_TOP_LEFT()[0] + 20, RECT_TOP_LEFT()[1] - 20), 
@@ -635,7 +718,7 @@ def control_drone(drone, coords, frame, histerezis_enabled, histerezis_on):
                 histerezis_on["up"] = False
                 drone.for_back_velocity = 0
         # Backward movement logic with hysteresis
-        elif center_y > RECT_BOTTOM_RIGHT()[1] + hysteresis_margin or histerezis_on["down"]:
+        elif center_y > RECT_BOTTOM_RIGHT()[1] or histerezis_on["down"]:
             if center_y > RECT_BOTTOM_RIGHT()[1] - hysteresis_margin:  # Continue until well inside
                 cv2.putText(frame, "BACKWARD", 
                             (RECT_TOP_LEFT()[0] + 20, RECT_TOP_LEFT()[1] - 20), 
@@ -671,7 +754,7 @@ def control_drone(drone, coords, frame, histerezis_enabled, histerezis_on):
     
     if histerezis_enabled:
         # Left rotation logic with hysteresis
-        if center_x < RECT_TOP_LEFT()[0] - hysteresis_margin_x or histerezis_on["left"]:
+        if center_x < RECT_TOP_LEFT()[0] or histerezis_on["left"]:
             if center_x < RECT_TOP_LEFT()[0] + hysteresis_margin_x:  # Continue until well inside
                 cv2.putText(frame, "<- ROTATE LEFT <-",
                     (RECT_TOP_LEFT()[0] - 110, (RECT_TOP_LEFT()[1] + RECT_BOTTOM_RIGHT()[1]) // 2),
@@ -683,7 +766,7 @@ def control_drone(drone, coords, frame, histerezis_enabled, histerezis_on):
                 histerezis_on["left"] = False
                 drone.yaw_velocity = 0
         # Right rotation logic with hysteresis
-        elif center_x > RECT_BOTTOM_RIGHT()[0] + hysteresis_margin_x or histerezis_on["right"]:
+        elif center_x > RECT_BOTTOM_RIGHT()[0] or histerezis_on["right"]:
             if center_x > RECT_BOTTOM_RIGHT()[0] - hysteresis_margin_x:  # Continue until well inside
                 cv2.putText(frame, "-> ROTATE RIGHT ->",
                             (RECT_BOTTOM_RIGHT()[0] + 20, (RECT_TOP_LEFT()[1] + RECT_BOTTOM_RIGHT()[1]) // 2),
@@ -967,7 +1050,7 @@ def find_new_id(template_dict, selected_id_container, all_objects_in_frame,all_p
     selected_id_to_track = selected_id_container["followed_id"]
     templates = template_dict.get(selected_id_to_track, [])
     replacement_id = -1
-    selected_id_last_center = selected_id_container.get("last_seen_coords", None)
+    selected_id_last_center = selected_id_container.get("last_seen_center_coords", None)
 
     if exclude_ids is None:
         exclude_ids = []
@@ -1011,6 +1094,9 @@ def find_new_id(template_dict, selected_id_container, all_objects_in_frame,all_p
             logger.info(f"✓ Re-acquired target! Old ID: {selected_id_to_track}, New ID: {replacement_id}")
             selected_id_container["followed_id"] = replacement_id
             selected_id_container["history"].append(replacement_id)
+            # Reset coordinate history when finding a new match via template matching
+            selected_id_container["center_history"] = []
+            logger.info(f"[TEMPLATE_MATCHING] Reset coordinate history for new ID {replacement_id}")
             return replacement_id
         else:
             logger.info(f"[TEMPLATE_MATCHING] ❌ No suitable match found (all scores above threshold)")
@@ -1239,7 +1325,9 @@ def main():
         "id_was_seen": False, 
         "lost_counter": 0, 
         "followed_id": None, 
-        "coords": None
+        "coords": None,
+        "center_history": [],  # History of (center_x, center_y) for the last COORDINATE_HISTORY_SIZE frames
+        "predicted_trajectory": []  # Kalman filter predicted positions when person is lost
     }
     selected_target_container = {
         "id": [],  # Target uses list like selected_id for consistency
@@ -1248,7 +1336,9 @@ def main():
         "lost_counter": 0, 
         "followed_id": None, 
         "coords": None,
-        "target_class": None  # Will be set once we identify the target object type
+        "target_class": None,  # Will be set once we identify the target object type
+        "center_history": [],  # History of (center_x, center_y) for the last COORDINATE_HISTORY_SIZE frames
+        "predicted_trajectory": []  # Kalman filter predicted positions when person is lost
     }
 
     persons_dict = {}  # Template dictionary for persons (used for both following and target tracking)
@@ -1288,6 +1378,7 @@ def main():
     
     logger.info(f"[OPTIMIZATION] YOLO processing every {YOLO_FRAME_SKIP} frames")
     logger.info(f"[OPTIMIZATION] Template matching every {TEMPLATE_MATCHING_FRAME_SKIP} YOLO frames")
+    logger.info(f"[TRACKING] Coordinate history size: {COORDINATE_HISTORY_SIZE} frames")
     if ENABLE_RRT_PATH:
         logger.info(f"[RRT*] Path planning enabled (threaded, async, every {RRT_FRAME_SKIP} frames)")
     
@@ -1319,7 +1410,7 @@ def main():
                 
                 results = model.track(frame, persist=True, verbose=False, tracker="bytetrack.yaml", classes=BASE_DETECTION_CLASSES)
                 last_yolo_results = results
-                annotated_frame = results[0].plot()
+                annotated_frame = results[0].plot(line_width=1, box_width=1)
                 
                 # Update target class information if we have a target
                 if TARGET_TRACKING_ENABLED and selected_target_container["id"]:
@@ -1366,7 +1457,7 @@ def main():
                 
                 # Draw previous detections on skipped frames if available
                 if results is not None and results[0].boxes is not None:
-                    annotated_frame = results[0].plot()
+                    annotated_frame = results[0].plot(line_width=1, box_width=1)
                 else:
                     # No YOLO results yet, just show the raw frame
                     annotated_frame = frame.copy()
@@ -1447,12 +1538,43 @@ def main():
 
             move_drone(drone)
 
+            # Get last seen coordinates for visualization when persons are lost
+            selected_last_seen = selected_id_container.get("last_seen_center_coords")
+            target_last_seen = selected_target_container.get("last_seen_center_coords") if TARGET_TRACKING_ENABLED else None
+            
+            # Get current RRT path for drawing on annotated frame
+            current_rrt_path = None
+            if rrt_planner:
+                selected_actually_present = (selected_id_container.get("lost_counter", 0) == 0 and 
+                                            selected_id_container.get("coords") is not None)
+                target_actually_present = (TARGET_TRACKING_ENABLED and 
+                                          selected_target_container.get("lost_counter", 0) == 0 and 
+                                          selected_target_container.get("coords") is not None)
+                both_ids_present = selected_actually_present and (target_actually_present if TARGET_TRACKING_ENABLED else False)
+                
+                if both_ids_present:
+                    current_rrt_path = rrt_planner.get_latest_path()
+            
+            # Draw RRT path on annotated frame if available
+            if ENABLE_RRT_PATH and current_rrt_path and len(current_rrt_path) > 1:
+                try:
+                    annotated_frame = rrt.draw_path_on_image(annotated_frame, current_rrt_path, RRT_PATH_COLOR, thickness=3)
+                except Exception as e:
+                    logger.warning(f"[RRT*] Error drawing path on annotated frame: {e}")
+            
             # Draw frame addons with both selected ID (red) and target ID (green) points
-            draw_frame_addons(annotated_frame, coords, target_coords)
+            # When lost, draw last seen position in different colors (yellow for selected, cyan for target)
+            draw_frame_addons(annotated_frame, coords, target_coords, selected_last_seen, target_last_seen)
 
-            cv2.imshow('Tello Video Feed', annotated_frame)
-            out_annotated.write(cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
-            out_clean.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+            # cv2.imshow('Tello Video Feed', annotated_frame)
+            cv2.imshow('Tello Video Feed', cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
+            
+
+            # out_annotated.write(cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
+            # out_clean.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+            
+            out_annotated.write(annotated_frame) # TODO CHECK COLORS GOOD IN SAVED VIDEOS
+            out_clean.write(frame)
             
             # Create and write BW segmented frame with selected/target as colored dots and RRT* path
             if results is not None:
