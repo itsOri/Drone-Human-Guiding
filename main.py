@@ -194,7 +194,7 @@ BLACK = (0, 0, 0)
 
 YAW_MOVING_VELOCITY = 4
 FB_MOVING_VELOCITY = 15
-DRONE_START_HEIGHT = 450 # 200 is good for outside, 70 for inside , 450 good outside
+DRONE_START_HEIGHT = 70 # 200 is good for outside, 70 for inside , 450 good outside
 MAX_LOST_ID_FRAMES = 20
 COORDINATE_HISTORY_SIZE = 30  # Number of frames to keep coordinate history for tracked persons
 
@@ -1419,7 +1419,7 @@ def main():
                 
                 results = model.track(frame, persist=True, verbose=False, tracker="bytetrack.yaml", classes=BASE_DETECTION_CLASSES)
                 last_yolo_results = results
-                annotated_frame = results[0].plot(line_width=1, box_width=1)
+                annotated_frame = results[0].plot(line_width=1)
                 
                 # Update target class information if we have a target
                 if TARGET_TRACKING_ENABLED and selected_target_container["id"]:
@@ -1466,7 +1466,7 @@ def main():
                 
                 # Draw previous detections on skipped frames if available
                 if results is not None and results[0].boxes is not None:
-                    annotated_frame = results[0].plot(line_width=1, box_width=1)
+                    annotated_frame = results[0].plot(line_width=1)
                 else:
                     # No YOLO results yet, just show the raw frame
                     annotated_frame = frame.copy()
