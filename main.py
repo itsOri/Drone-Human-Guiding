@@ -195,8 +195,10 @@ BLACK = (0, 0, 0)
 YAW_MOVING_VELOCITY = 4
 FB_MOVING_VELOCITY = 15
 DRONE_START_HEIGHT = 450 # 200 is good for outside, 70 for inside , 450 good outside
-MAX_LOST_ID_FRAMES = 20
 COORDINATE_HISTORY_SIZE = 30  # Number of frames to keep coordinate history for tracked persons
+
+TEMPLATE_M_WAITING_FRAMES_WINDOW = 15  # Number of lost frames to wait before checking best template match
+MAX_LOST_ROUNDS = 3
 
 # === YOLO DETECTION CLASSES ===
 # Always detect these classes
@@ -543,17 +545,38 @@ def find_id_in_frame(results, selected_id_container, persons_dict, all_persons_i
         selected_id_container["center_history"] = []
     if "predicted_trajectory" not in selected_id_container:
         selected_id_container["predicted_trajectory"] = []
-    
+    if "lost_rounds" not in selected_id_container:
+        selected_id_container["lost_rounds"] = 0
+
     target_id = get_target_id_in_frame(results, selected_id_container["history"])
     logger.debug(f"Initial target_id from frame: {target_id}")
     logger.debug(f"Current followed_id: {selected_id_container.get('followed_id')}")
     logger.debug(f"ID was seen before: {selected_id_container.get('id_was_seen')}")
     
+    # enters here in case target_id that appeared in past frames was lost
     if not target_id and selected_id_container["id_was_seen"]:
-        logger.debug(f"Target not found in frame, attempting template matching...")
-        # Keep the old followed_id for template matching, don't overwrite it yet
-        target_id = find_new_id(persons_dict, selected_id_container, all_persons_in_frame,all_persons_centers_dict, exclude_ids)
-        logger.debug(f"Template matching result: {target_id}")
+        # in case window is over, take the best template matching result below threshold.
+        # if no result found, go to next round. if max rounds reached, enter the target_id manually.
+        if selected_id_container["lost_counter"] % TEMPLATE_M_WAITING_FRAMES_WINDOW == 0 and selected_id_container["lost_counter"] != 0:
+            selected_id_container["lost_rounds"] += 1
+            logger.debug(f"Template matching window expired, checking best match...")
+            target_id = choose_best_match(selected_id_container)
+            if target_id is None:
+                logger.debug(f"No suitable template match found, going to next round.")
+                #if max rounds reached, enter the target_id manually
+                if selected_id_container["lost_rounds"] == MAX_LOST_ROUNDS:
+                    # Prompt user for new ID input
+                    logger.debug(f"all rounds finished without a match, should enter ID manually.")
+            else:
+                logger.debug(f"best match over the window that passed threshold: {target_id}")
+                selected_id_container["lost_rounds"] = 0
+        # in case window isnt over, do template matching and append scores to a dict
+        else:
+            logger.debug(f"Target not found in frame, attempting template matching...")
+            # Keep the old followed_id for template matching, don't overwrite it yet
+            find_new_id(persons_dict, selected_id_container, all_persons_in_frame,all_persons_centers_dict, exclude_ids)
+            logger.debug(f"Template matching result: {target_id}")
+
 
     # Only update followed_id after template matching attempt
     if target_id:
@@ -579,7 +602,7 @@ def find_id_in_frame(results, selected_id_container, persons_dict, all_persons_i
         selected_id_container["lost_counter"] = 0
         selected_id_container["last_seen_center_coords"] = None
         selected_id_container["predicted_trajectory"] = []  # Clear predictions when person is found
-    elif selected_id_container["id_was_seen"] and selected_id_container["lost_counter"] < MAX_LOST_ID_FRAMES:
+    elif selected_id_container["id_was_seen"] and selected_id_container["lost_rounds"] < MAX_LOST_ROUNDS:
         selected_id_container["lost_counter"] += 1
         logger.info(f"Counter value: {selected_id_container['lost_counter']}")
         
@@ -610,7 +633,7 @@ def find_id_in_frame(results, selected_id_container, persons_dict, all_persons_i
             logger.info(f"[KALMAN] Using predicted position: ({int(predicted_x)}, {int(predicted_y)}), {len(selected_id_container['predicted_trajectory'])} predictions remaining")
             if not selected_id_container["predicted_trajectory"]:
                 logger.info(f"[KALMAN] All predicted positions used up.")
-                selected_id_container["last_seen_center_coords"] = (predicted_x, predicted_y)
+                selected_id_container["center_history"].append((int(predicted_x), int(predicted_y)))
         else:
             # No predictions available, use last known coords from center_history
             if selected_id_container["center_history"]:
@@ -629,20 +652,7 @@ def find_id_in_frame(results, selected_id_container, persons_dict, all_persons_i
         # Only clear followed_id if template matching also failed
         if not target_id:  # target_id is None, meaning template matching failed too
             selected_id_container["followed_id"] = None
-        selected_id_container["id"] = []
-        
-        # Save last known or predicted position for final template matching attempt
-        if selected_id_container["predicted_trajectory"]:
-            predicted_pos = selected_id_container["predicted_trajectory"].pop(0)
-            predicted_x, predicted_y = predicted_pos
-            selected_id_container["last_seen_center_coords"] = (int(predicted_x), int(predicted_y))
-            logger.info(f"[KALMAN] Final attempt - using predicted position: ({int(predicted_x)}, {int(predicted_y)})")
-        elif selected_id_container["center_history"]:
-            # Use last item from center_history instead of coords
-            center_x, center_y = selected_id_container["center_history"][-1]
-            selected_id_container["last_seen_center_coords"] = (center_x, center_y)
-            logger.info(f"[KALMAN] Final attempt - using last known position from history: ({center_x}, {center_y})")
-        
+        selected_id_container["id"] = []        
         selected_id_container["coords"] = None  # Clear coordinates when target is lost
         selected_id_container["predicted_trajectory"] = []  # Clear any remaining predictions
         logger.info("[INPUT] Please enter a new ID to select.")
