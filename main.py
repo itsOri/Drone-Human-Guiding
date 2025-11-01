@@ -211,25 +211,23 @@ NOTEPAD_PATH = r"C:\Program Files (x86)\Notepad++\notepad++.exe"
 #------- Functions -------#
 def open_log_in_editor(log_filename):
     """
-    Opens the given log file in Notepad++ if available, otherwise falls back to Notepad.
+    Opens a new PowerShell window showing the last 20 lines of the log file,
+    continuously updating (like 'tail -f' in Linux).
     """
-    return
+    # Make sure the log file exists
+    if not os.path.exists(log_filename):
+        logger.error(f"Log file not found: {log_filename}")
+        return
+
+    # PowerShell command to show last 20 lines and follow the file
     powershell_cmd = f'powershell -NoExit -Command "Get-Content -Path \'{log_filename}\' -Tail 20 -Wait"'
-    if os.path.exists(NOTEPAD_PATH):
-        # try:
-        #     subprocess.Popen([NOTEPAD_PATH, log_filename])
-        #     logger.info(f"Opened log file in Notepad++: {log_filename}")
-        # except Exception as e:
-        #     logger.warning(f"Failed to open log in Notepad++: {e}")
-            # PowerShell command: show last 20 lines and follow the file
-        try:
-            subprocess.Popen(["start", "cmd", "/k", powershell_cmd], shell=True)
-            logger.info(f"Opened log tail terminal for: {log_filename}")
-        except Exception as e:
-            logger.warning(f"Failed to open log tail terminal: {e}")
-    else:
-        print("⚠️ Notepad++ not found, opening in Notepad.")
-        subprocess.Popen(["notepad.exe", log_filename])
+
+    try:
+        # Open PowerShell in a new window
+        subprocess.Popen(["powershell", "-NoExit", "-Command", f"Get-Content -Path '{log_filename}' -Tail 20 -Wait"])
+        logger.info(f"Opened PowerShell tail view for: {log_filename}")
+    except Exception as e:
+        logger.warning(f"Failed to open PowerShell tail view: {e}")
 
 def RECT_TOP_LEFT():
     if(DYNAMIC_RECT is False): 
@@ -616,6 +614,9 @@ def find_id_in_frame(results, selected_id_container, persons_dict, all_persons_i
             # Store as (center_x, center_y) format for template matching
             selected_id_container["last_seen_center_coords"] = (int(predicted_x), int(predicted_y))
             logger.info(f"[KALMAN] Using predicted position: ({int(predicted_x)}, {int(predicted_y)}), {len(selected_id_container['predicted_trajectory'])} predictions remaining")
+            if not selected_id_container["predicted_trajectory"]:
+                logger.info(f"[KALMAN] All predicted positions used up.")
+                selected_id_container["last_seen_center_coords"] = (predicted_x, predicted_y)
         else:
             # No predictions available, use last known coords from center_history
             if selected_id_container["center_history"]:
