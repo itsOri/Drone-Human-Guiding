@@ -1412,7 +1412,7 @@ def main():
                 
                 results = model.track(frame, persist=True, verbose=False, tracker="bytetrack.yaml", classes=BASE_DETECTION_CLASSES)
                 last_yolo_results = results
-                annotated_frame = results[0].plot()
+                annotated_frame = results[0].plot(line_width=1, box_width=1)
                 
                 # Update target class information if we have a target
                 if TARGET_TRACKING_ENABLED and selected_target_container["id"]:
@@ -1459,7 +1459,7 @@ def main():
                 
                 # Draw previous detections on skipped frames if available
                 if results is not None and results[0].boxes is not None:
-                    annotated_frame = results[0].plot()
+                    annotated_frame = results[0].plot(line_width=1, box_width=1)
                 else:
                     # No YOLO results yet, just show the raw frame
                     annotated_frame = frame.copy()
