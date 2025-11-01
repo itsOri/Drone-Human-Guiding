@@ -608,6 +608,9 @@ def find_id_in_frame(results, selected_id_container, persons_dict, all_persons_i
             # Store as (center_x, center_y) format for template matching
             selected_id_container["last_seen_center_coords"] = (int(predicted_x), int(predicted_y))
             logger.info(f"[KALMAN] Using predicted position: ({int(predicted_x)}, {int(predicted_y)}), {len(selected_id_container['predicted_trajectory'])} predictions remaining")
+            if not selected_id_container["predicted_trajectory"]:
+                logger.info(f"[KALMAN] All predicted positions used up.")
+                selected_id_container["last_seen_center_coords"] = (predicted_x, predicted_y)
         else:
             # No predictions available, use last known coords from center_history
             if selected_id_container["center_history"]:
