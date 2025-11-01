@@ -1544,6 +1544,26 @@ def main():
             selected_last_seen = selected_id_container.get("last_seen_center_coords")
             target_last_seen = selected_target_container.get("last_seen_center_coords") if TARGET_TRACKING_ENABLED else None
             
+            # Get current RRT path for drawing on annotated frame
+            current_rrt_path = None
+            if rrt_planner:
+                selected_actually_present = (selected_id_container.get("lost_counter", 0) == 0 and 
+                                            selected_id_container.get("coords") is not None)
+                target_actually_present = (TARGET_TRACKING_ENABLED and 
+                                          selected_target_container.get("lost_counter", 0) == 0 and 
+                                          selected_target_container.get("coords") is not None)
+                both_ids_present = selected_actually_present and (target_actually_present if TARGET_TRACKING_ENABLED else False)
+                
+                if both_ids_present:
+                    current_rrt_path = rrt_planner.get_latest_path()
+            
+            # Draw RRT path on annotated frame if available
+            if ENABLE_RRT_PATH and current_rrt_path and len(current_rrt_path) > 1:
+                try:
+                    annotated_frame = rrt.draw_path_on_image(annotated_frame, current_rrt_path, RRT_PATH_COLOR, thickness=3)
+                except Exception as e:
+                    logger.warning(f"[RRT*] Error drawing path on annotated frame: {e}")
+            
             # Draw frame addons with both selected ID (red) and target ID (green) points
             # When lost, draw last seen position in different colors (yellow for selected, cyan for target)
             draw_frame_addons(annotated_frame, coords, target_coords, selected_last_seen, target_last_seen)
