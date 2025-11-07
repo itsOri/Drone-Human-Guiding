@@ -1109,22 +1109,11 @@ def find_new_id(template_dict, selected_id_container, all_objects_in_frame, all_
     
     # Convert all_objects_in_frame format for template matching
     # and filter out excluded IDs and non-person objects
-    objects_for_matching = {}
-    if isinstance(list(all_objects_in_frame.values())[0], dict):
-        # New format: {id: {'image': img, 'class_id': cls}}
-        # Only include persons (class 0) for template matching
-        objects_for_matching = {
-            obj_id: obj_info['image'] 
-            for obj_id, obj_info in all_objects_in_frame.items() 
-            if obj_id not in exclude_ids and obj_info.get('class_id') == 0
-        }
-    else:
-        # Old format: {id: image}
-        objects_for_matching = {
-            obj_id: img 
-            for obj_id, img in all_objects_in_frame.items() 
-            if obj_id not in exclude_ids
-        }
+    objects_for_matching = {
+        obj_id: obj_info['image'] 
+        for obj_id, obj_info in all_objects_in_frame.items() 
+        if obj_id not in exclude_ids and obj_info.get('class_id') == 0
+    }
     
     if not objects_for_matching:
         logger.info(f"[TEMPLATE_MATCHING] No valid objects after excluding IDs {exclude_ids}")
