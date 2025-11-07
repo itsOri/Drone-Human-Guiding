@@ -1109,11 +1109,22 @@ def find_new_id(template_dict, selected_id_container, all_objects_in_frame, all_
     
     # Convert all_objects_in_frame format for template matching
     # and filter out excluded IDs and non-person objects
-    objects_for_matching = {
-        obj_id: obj_info['image'] 
-        for obj_id, obj_info in all_objects_in_frame.items() 
-        if obj_id not in exclude_ids and obj_info.get('class_id') == 0
-    }
+    objects_for_matching = {}
+    if isinstance(list(all_objects_in_frame.values())[0], dict):
+        # New format: {id: {'image': img, 'class_id': cls}}
+        # Only include persons (class 0) for template matching
+        objects_for_matching = {
+            obj_id: obj_info['image'] 
+            for obj_id, obj_info in all_objects_in_frame.items() 
+            if obj_id not in exclude_ids and obj_info.get('class_id') == 0
+        }
+    else:
+        # Old format: {id: image}
+        objects_for_matching = {
+            obj_id: img 
+            for obj_id, img in all_objects_in_frame.items() 
+            if obj_id not in exclude_ids
+        }
     
     if not objects_for_matching:
         logger.info(f"[TEMPLATE_MATCHING] No valid objects after excluding IDs {exclude_ids}")
@@ -1466,6 +1477,10 @@ def main():
                 
                 results = model.track(frame, persist=True, verbose=False, tracker="bytetrack.yaml", classes=BASE_DETECTION_CLASSES)
                 last_yolo_results = results
+
+                # filter out cars boxes from results
+                results[0].boxes = results[0].boxes[results[0].boxes.cls != 2]
+
                 annotated_frame = results[0].plot(line_width=1)
                 
                 # Update target class information if we have a target
@@ -1484,7 +1499,7 @@ def main():
                     
                     # Extract all persons visible in the current frame (for both following and target tracking)
                     # Only persons (class 0) are used for template matching
-                    # TODO: all_persons_in_frame should be a class that will contain also centers for each person
+
                     all_persons_in_frame, all_persons_centers_dict = template_matching.extract_all_visible_persons(results, frame)
                     
                     # Debug: Show extracted objects
@@ -1513,6 +1528,9 @@ def main():
                 
                 # Draw previous detections on skipped frames if available
                 if results is not None and results[0].boxes is not None:
+                    # filter out cars boxes from results
+                    results[0].boxes = results[0].boxes[results[0].boxes.cls != 2]
+                    
                     annotated_frame = results[0].plot(line_width=1)
                 else:
                     # No YOLO results yet, just show the raw frame
