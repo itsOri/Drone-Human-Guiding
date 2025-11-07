@@ -178,20 +178,20 @@ def get_distance_penalty(center1, center2):
     penalty = (1 - np.exp(-alpha * distance))
     return penalty
 
-def find_best_match(container, other_persons_dict, selected_id_templates, selected_id_last_center, all_persons_centers_dict):
+def find_best_match(person, other_persons_dict, selected_id_templates, selected_id_last_center, all_persons_centers_dict):
 	"""
-	Performs template matching and updates container's best_match_candidates dict.
+	Performs template matching and updates person's best_match_candidates dict.
 	For each candidate ID, keeps the minimum (best) score across multiple calls.
-	Does not return a value - updates container in place.
+	Does not return a value - updates person in place.
 	
 	Args:
-		container: The tracking container with best_match_candidates dict
+		person: Person object with the lost ID information and best_match_candidates dict
 		other_persons_dict: Dict of {id: image} for current frame candidates
 		selected_id_templates: List of template images for the lost ID
 		selected_id_last_center: Last known center coordinates of lost ID
 		all_persons_centers_dict: Dict of {id: (center_x, center_y)} for current frame
 	"""
-	selected_id_to_track = container.get("followed_id")
+	selected_id_to_track = person.followed_id
 	
 	logger.warning(f"Target ID {selected_id_to_track} lost. Attempting to re-acquire...")
 	logger.info(f"[TEMPLATE_MATCHING] === ATTEMPTING RE-IDENTIFICATION ===")
@@ -237,8 +237,8 @@ def find_best_match(container, other_persons_dict, selected_id_templates, select
 		sample_scores = scores_info['all_template_scores'][:5]  # Show first 5 template scores
 		logger.info(f"[TEMPLATE_MATCHING]      Sample scores: {[f'{s:.4f}' for s in sample_scores]}")
 	
-	# Update best_match_candidates in container (keep minimum score for each ID)
-	best_match_candidates = container.get("best_match_candidates", {})
+	# Update best_match_candidates in person (keep minimum score for each ID)
+	best_match_candidates = person.best_match_candidates
 	updates = []
 	
 	for id, score in all_scores.items():
@@ -247,7 +247,7 @@ def find_best_match(container, other_persons_dict, selected_id_templates, select
 			best_match_candidates[id] = score
 			updates.append(f"ID {id}: {score:.4f}")
 	
-	container["best_match_candidates"] = best_match_candidates
+	person.best_match_candidates = best_match_candidates
 	
 	logger.info(f"[TEMPLATE_MATCHING] === SUMMARY ===")
 	logger.info(f"[TEMPLATE_MATCHING] All match scores (current frame): {all_scores}")
@@ -288,7 +288,7 @@ def display_video_frame_by_frame():
 
 			# YOLO automatically converts BGR to RGB internally, so pass the frame as-is
 			results = model.track(frame, persist=True, verbose=False, tracker="bytetrack.yaml", classes=[0])
-			
+			print(results)
 			# --- CORE LOGIC ---
 			# 1. Extract all persons visible in the current frame.
 			# Extract from the original BGR frame

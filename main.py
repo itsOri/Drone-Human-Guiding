@@ -133,7 +133,56 @@ from testsfolder import RRTStar_New as rrt
 from testsfolder.kelman_implementation import predict_trajectory
 import subprocess
 
-#TODO change container to class
+
+class Person:
+    """
+    Represents a tracked person with all tracking-related information.
+    Used for both selected person (to follow) and target person (to navigate to).
+    """
+    def __init__(self, person_type):
+        self.id = []  # List of IDs entered by user
+        self.history = []  # History of all IDs this person has been tracked as
+        self.id_was_seen = False  # Whether this person has been seen at least once
+        self.lost_counter = 0  # Counter for consecutive frames where person is lost
+        self.followed_id = None  # Currently followed ID (may differ from input after template matching)
+        self.coords = None  # Current bounding box coordinates (x1, y1, x2, y2, center_x, center_y)
+        self.last_seen_center_coords = None  # Last known center coordinates when lost
+        self.center_history = []  # History of center coordinates for the last N frames
+        self.predicted_trajectory = []  # Kalman filter predicted positions when person is lost
+        self.best_match_candidates = {}  # Template matching candidates: {id: score}
+        self.lost_rounds = 0  # Number of template matching rounds completed while lost
+        self.type = person_type # type of person: USER or TARGET
+
+    def reset_details_on_new_id(self):
+        """
+        Reset all tracking details to initial state when replacing id with a new one.
+        """
+        self.lost_counter = 0
+        self.id_was_seen = False
+
+    def reset_when_seen(self):
+        """
+        Reset all tracking details to initial state when person is seen.
+        """
+        self.id_was_seen = True
+        self.lost_counter = 0
+        self.best_match_candidates = {}
+        self.last_seen_center_coords = None
+        self.predicted_trajectory = []
+
+    def is_person_class(self, results):
+        """
+        Checks if the ID is a person class in the results.
+        Returns True if the ID is a person class, False otherwise.
+        """
+        for box in results[0].boxes:
+            if hasattr(box, 'id') and box.id is not None:
+                box_id = int(box.id.item()) if hasattr(box.id, 'item') else int(box.id)
+                if box_id == self.followed_id:
+                    return int(box.cls.item()) == 0
+
+        return False
+
 TIMESTAMP = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 # Create videos directory if it doesn't exist
 VIDEOS_DIR = "videos"
@@ -194,7 +243,7 @@ BLACK = (0, 0, 0)
 
 YAW_MOVING_VELOCITY = 4
 FB_MOVING_VELOCITY = 15
-DRONE_START_HEIGHT = 470 # 200 is good for outside, 70 for inside , 450 good outside
+DRONE_START_HEIGHT = 70 # 200 is good for outside, 70 for inside , 450 good outside
 MAX_LOST_ID_FRAMES = 20
 COORDINATE_HISTORY_SIZE = 30  # Number of frames to keep coordinate history for tracked persons
 
@@ -310,63 +359,36 @@ def launch_drone(drone):
 def shutdown_drone(drone):
     drone.land()
     return
-
-# def get_id(result):
-# 	return
-    
-def target_thread(target_id_container, selected_id_container):
-    target_input = input("[INPUT] Enter Target Person ID to navigate to: ")
-    try:
-        target_id = int(target_input)
-        
-        # Check if this ID is the same as selected ID
-        if selected_id_container["id"] and target_id in selected_id_container["history"]:
-            print(f"[ERROR] Target ID {target_id} is the same as selected ID. Target and selected must be different.")
-            logger.warning(f"Rejected target ID {target_id} - same as selected ID")
-            return
-        
-        target_id_container["id"].append(target_id)
-        target_id_container["history"].append(target_id)
-        target_id_container["lost_counter"] = 0
-        target_id_container["id_was_seen"] = False
-        target_id_container["target_class"] = None  # Reset target class for new target
-        logger.info(f"Target ID: {target_id_container['id']}")
-
-    except ValueError:
-        logger.warning("Invalid ID entered for target.")
-        target_id_container["id"] = []
-        target_id_container["target_class"] = None
     
 
-# TODO unite this func with target thread using generic container or string param for text display to user
-def input_thread(selected_id_container, target_id_container):
-    user_input = input("[INPUT] Enter Person ID to follow: ")
+def input_thread(current_person, other_person):
+    user_input = input(f"[INPUT] Enter {current_person.type.capitalize()} Person ID to follow: ")
     try:
         selected_id = int(user_input)
         
         # Check if this ID is the same as target ID
-        if target_id_container["id"] and selected_id in target_id_container["history"]:
-            print(f"[ERROR] Selected ID {selected_id} is the same as target ID. Target and selected must be different.")
-            logger.warning(f"Rejected selected ID {selected_id} - same as target ID")
+        if other_person.id and selected_id in other_person.history:
+            print(f"[ERROR] {current_person.type} ID {selected_id} is the same as {other_person.type} ID. USER and TARGET must be different.")
+            logger.warning(f"Rejected {current_person.type} ID {selected_id} - same as {other_person.type} ID")
             return
         
-        selected_id_container["id"].append(selected_id)
-        selected_id_container["history"].append(selected_id)
-        selected_id_container["lost_counter"] = 0
-        selected_id_container["id_was_seen"] = False
-        logger.info(f"Selected Person ID: {selected_id_container['id']}")
+        current_person.followed_id = selected_id
+        current_person.id.append(selected_id)
+        current_person.history.append(selected_id)
+        current_person.reset_details_on_new_id()
+        logger.info(f"{current_person.type} Person ID: {current_person.id}")
 
     except ValueError:
-        logger.warning("Invalid ID entered for selected person.")
-        selected_id_container["id"] = []
+        logger.warning(f"Invalid ID entered for {current_person.type} person.")
+        current_person.id = []
 
 
 # TODO check its generic func
-def init_id_getter_thread(selected_id_container, target_id_container):
+def init_id_getter_thread(selected_person, target_person):
     """
     Initializes and starts a background thread to continuously get user input for selected ID.
     """
-    thread = threading.Thread(target=input_thread, args=(selected_id_container, target_id_container))
+    thread = threading.Thread(target=input_thread, args=(selected_person, target_person))
     thread.daemon = True
     thread.start()
     return thread
@@ -434,29 +456,6 @@ def get_target_class_from_id(results, target_id):
     return None
 
 
-def update_target_class(target_container, results):
-    """
-    Update the target_class in container once we identify what type of object the target is.
-    Only supports person and car classes.
-    """
-    if not target_container.get("id") or not target_container["id"]:
-        return
-        
-    target_ids = target_container["id"]
-    if not target_ids:
-        return
-        
-    # Try to identify the class of the first target ID
-    target_id = target_ids[0] if isinstance(target_ids, list) else target_ids
-    target_class = get_target_class_from_id(results, target_id)
-    
-    if target_class is not None and target_class in BASE_CLASS_NAMES:
-        target_container["target_class"] = target_class
-        class_name = get_object_class_name(target_class)
-        logger.info(f"Target ID {target_id} identified as {class_name} (class {target_class})")
-    else:
-        # Target not found or not a supported class
-        target_container["target_class"] = None
 
 
 def get_object_info(results, target_id):
@@ -522,14 +521,16 @@ def get_target_id_in_frame(results, target_ids):
     logger.error("Error - target id not in frame (or not a person)")
     return None
 
-def find_id_in_frame(results, selected_id_container, persons_dict, all_persons_in_frame, all_persons_centers_dict, exclude_ids=None, tracking_type="Selected"):
+def find_id_in_frame(results, person, persons_dict, all_persons_in_frame, all_persons_centers_dict, exclude_ids=None, tracking_type="Selected"):
     """
     Checks if an ID is selected and processes tracking results to get coordinates.
-    Stores the coordinates in selected_id_container["coords"] if found.
+    Make sure the id that is being tracked is a person.
+    Stores the coordinates in person.coords if found.
     If the ID is not found, resets selection and input thread status.
     Returns updated (id_selected).
     
     Args:
+        person: Person object containing tracking information
         exclude_ids: List of IDs to exclude from template matching (e.g., the opposite tracked ID)
         tracking_type: String "Selected" or "Target" for logging purposes
     """
@@ -537,112 +538,92 @@ def find_id_in_frame(results, selected_id_container, persons_dict, all_persons_i
     
     if exclude_ids is None:
         exclude_ids = []
-    
-    # Ensure all required keys exist in the container
-    if "id_was_seen" not in selected_id_container:
-        selected_id_container["id_was_seen"] = False
-    if "lost_counter" not in selected_id_container:
-        selected_id_container["lost_counter"] = 0
-    if "followed_id" not in selected_id_container:
-        selected_id_container["followed_id"] = None
-    if "coords" not in selected_id_container:
-        selected_id_container["coords"] = None
-    if "last_seen_center_coords" not in selected_id_container:
-        selected_id_container["last_seen_center_coords"] = None
-    if "center_history" not in selected_id_container:
-        selected_id_container["center_history"] = []
-    if "predicted_trajectory" not in selected_id_container:
-        selected_id_container["predicted_trajectory"] = []
-    if "lost_rounds" not in selected_id_container:
-        selected_id_container["lost_rounds"] = 0
-    if "best_match_candidates" not in selected_id_container:
-        selected_id_container["best_match_candidates"] = {}
 
-    target_id = get_target_id_in_frame(results, selected_id_container["history"])
+    target_id = get_target_id_in_frame(results, person.history)
     logger.debug(f"Initial target_id from frame: {target_id}")
-    logger.debug(f"Current followed_id: {selected_id_container.get('followed_id')}")
-    logger.debug(f"ID was seen before: {selected_id_container.get('id_was_seen')}")
+    logger.debug(f"Current followed_id: {person.followed_id}")
+    logger.debug(f"ID was seen before: {person.id_was_seen}")
     
+    if not person.is_person_class(results):
+        logger.error(f"[{tracking_type}] ID {person.id} is not a person. Skipping tracking.")
+        return False
+
     # enters here in case target_id that appeared in past frames was lost
-    if not target_id and selected_id_container["id_was_seen"]:
+    if not target_id and person.id_was_seen:
         # in case window is over, take the best template matching result below threshold.
         # if no result found, go to next round. if max rounds reached, enter the target_id manually.
-        if selected_id_container["lost_counter"] % TEMPLATE_M_WAITING_FRAMES_WINDOW == 0 and selected_id_container["lost_counter"] != 0:
-            selected_id_container["lost_rounds"] += 1
-            followed_id = selected_id_container.get("followed_id")
-            logger.info(f"[{tracking_type}] Template matching window expired for ID {followed_id}. Round {selected_id_container['lost_rounds']}/{MAX_LOST_ROUNDS}")
+        if person.lost_counter % TEMPLATE_M_WAITING_FRAMES_WINDOW == 0 and person.lost_counter != 0:
+            person.lost_rounds += 1
+            followed_id = person.followed_id
+            logger.info(f"[{tracking_type}] Template matching window expired for ID {followed_id}. Round {person.lost_rounds}/{MAX_LOST_ROUNDS}")
             # Get current IDs in frame for filtering candidates
             current_ids_in_frame = get_ids_in_frame(results)
             # Note: choose_best_match will clear best_match_candidates automatically
-            target_id = choose_best_match(selected_id_container, current_ids_in_frame)
+            target_id = choose_best_match(person, current_ids_in_frame)
             if target_id is None:
                 logger.info(f"[{tracking_type}] No suitable template match found, going to next round.")
                 #if max rounds reached, enter the target_id manually
-                if selected_id_container["lost_rounds"] == MAX_LOST_ROUNDS:
+                if person.lost_rounds == MAX_LOST_ROUNDS:
                     # Prompt user for new ID input
                     logger.warning(f"[{tracking_type}] All {MAX_LOST_ROUNDS} rounds finished without a match. Manual ID entry required.")
             else:
                 logger.info(f"[{tracking_type}] Best match ID {target_id} passed threshold!")
-                # Update container with the new followed ID
-                selected_id_container["followed_id"] = target_id
-                selected_id_container["history"].append(target_id)
-                selected_id_container["center_history"] = []
-                selected_id_container["lost_rounds"] = 0
+                # Update person with the new followed ID
+                person.followed_id = target_id
+                person.history.append(target_id)
+                person.center_history = []
+                person.lost_rounds = 0
                 logger.info(f"[{tracking_type}] ✓ Re-acquired! Old ID: {followed_id}, New ID: {target_id}")
         # in case window isnt over, do template matching and append scores to a dict
         else:
             logger.debug(f"Target not found in frame, attempting template matching...")
             # Keep the old followed_id for template matching, don't overwrite it yet
-            find_new_id(persons_dict, selected_id_container, all_persons_in_frame,all_persons_centers_dict, exclude_ids)
+            find_new_id(persons_dict, person, all_persons_in_frame, all_persons_centers_dict, exclude_ids)
             logger.debug(f"Template matching result: {target_id}")
 
 
     # Only update followed_id when we have a valid target_id (don't overwrite with None)
     if target_id:
-        logger.debug(f"Updating followed_id from {selected_id_container.get('followed_id')} to {target_id}")
-        selected_id_container["followed_id"] = target_id
+        logger.debug(f"Updating followed_id from {person.followed_id} to {target_id}")
+        person.followed_id = target_id
     
     # Use followed_id to get coordinates (this persists even when target_id is None during template matching)
-    coords = get_coordinates_by_id(results, selected_id_container.get("followed_id"))
+    coords = get_coordinates_by_id(results, person.followed_id)
     
     # if id is found -> we have coords of this person
     logger.debug(f"[{tracking_type}] coords: {coords}")
-    logger.debug(f"[{tracking_type}] id_was_seen: {selected_id_container.get('id_was_seen')}")
-    logger.debug(f"[{tracking_type}] lost_rounds < MAX_LOST_ROUNDS: {selected_id_container.get('lost_rounds', 0)} < {MAX_LOST_ROUNDS} = {selected_id_container.get('lost_rounds', 0) < MAX_LOST_ROUNDS}")
+    logger.debug(f"[{tracking_type}] id_was_seen: {person.id_was_seen}")
+    logger.debug(f"[{tracking_type}] lost_rounds < MAX_LOST_ROUNDS: {person.lost_rounds} < {MAX_LOST_ROUNDS} = {person.lost_rounds < MAX_LOST_ROUNDS}")
     
     if coords:
-        selected_id_container["coords"] = coords  # Store or update the coordinates
+        person.coords = coords  # Store or update the coordinates
         x1, y1, x2, y2, center_x, center_y = coords
-        followed_id = selected_id_container.get("followed_id")
+        followed_id = person.followed_id
         logger.info(f"[{tracking_type}] Frame: Found ID {followed_id} at ({x1}, {y1}), ({x2}, {y2}), center: ({center_x}, {center_y})")
         
         # Update coordinate history
-        selected_id_container["center_history"].append((center_x, center_y))
+        person.center_history.append((center_x, center_y))
         # Keep only the last COORDINATE_HISTORY_SIZE frames
-        if len(selected_id_container["center_history"]) > COORDINATE_HISTORY_SIZE:
-            selected_id_container["center_history"].pop(0)
+        if len(person.center_history) > COORDINATE_HISTORY_SIZE:
+            person.center_history.pop(0)
         
         # You can add more logic here (e.g., draw something special or send commands)
         is_id_found = True
-        selected_id_container["id_was_seen"] = True
-        selected_id_container["lost_counter"] = 0
-        selected_id_container["best_match_candidates"] = {}  # Clear candidates when person is found
-        selected_id_container["last_seen_center_coords"] = None
-        selected_id_container["predicted_trajectory"] = []  # Clear predictions when person is found
-    elif selected_id_container["id_was_seen"] and selected_id_container["lost_rounds"] < MAX_LOST_ROUNDS:
-        selected_id_container["lost_counter"] += 1
-        followed_id = selected_id_container.get("followed_id")
-        logger.info(f"[{tracking_type}] ID {followed_id} lost. Counter: {selected_id_container['lost_counter']}/{TEMPLATE_M_WAITING_FRAMES_WINDOW}, Round: {selected_id_container['lost_rounds']}/{MAX_LOST_ROUNDS}")
-        logger.info(f"[{tracking_type}] Current best_match_candidates: {selected_id_container.get('best_match_candidates', {})}")
+        person.reset_when_seen()
+    elif person.id_was_seen and person.lost_rounds < MAX_LOST_ROUNDS:
+        person.lost_counter += 1
+        followed_id = person.followed_id
+        logger.info(f"[{tracking_type}] ID {followed_id} lost. Counter: {person.lost_counter}/{TEMPLATE_M_WAITING_FRAMES_WINDOW}, Round: {person.lost_rounds}/{MAX_LOST_ROUNDS}")
+        logger.info(f"[{tracking_type}] Current best_match_candidates: {person.best_match_candidates}")
         
         # Use Kalman filter prediction when person is lost
-        if selected_id_container["lost_counter"] == 1:
+        if person.lost_counter == 1:
             # First time person is lost - generate trajectory predictions
-            center_history = selected_id_container.get("center_history", [])
+            center_history = person.center_history
             if center_history and len(center_history) > 0:
                 logger.info(f"[KALMAN] Generating trajectory prediction with {len(center_history)} historical points")
                 predicted_positions = predict_trajectory(center_history)
-                selected_id_container["predicted_trajectory"] = predicted_positions
+                person.predicted_trajectory = predicted_positions
                 
                 if predicted_positions:
                     logger.info(f"[KALMAN] Generated {len(predicted_positions)} predicted positions")
@@ -650,29 +631,29 @@ def find_id_in_frame(results, selected_id_container, persons_dict, all_persons_i
                     logger.info(f"[KALMAN] Not enough history (need >5 frames), using last known position")
             else:
                 logger.info(f"[KALMAN] No center history available for prediction")
-                selected_id_container["predicted_trajectory"] = []
+                person.predicted_trajectory = []
         
         # Update last_seen_center_coords with predicted trajectory or last known position
-        if selected_id_container["predicted_trajectory"]:
+        if person.predicted_trajectory:
             # Pop the first predicted coordinate and use it
-            predicted_pos = selected_id_container["predicted_trajectory"].pop(0)
+            predicted_pos = person.predicted_trajectory.pop(0)
             predicted_x, predicted_y = predicted_pos
             # Store as (center_x, center_y) format for template matching
-            selected_id_container["last_seen_center_coords"] = (int(predicted_x), int(predicted_y))
-            logger.info(f"[KALMAN] Using predicted position: ({int(predicted_x)}, {int(predicted_y)}), {len(selected_id_container['predicted_trajectory'])} predictions remaining")
-            if not selected_id_container["predicted_trajectory"]:
+            person.last_seen_center_coords = (int(predicted_x), int(predicted_y))
+            logger.info(f"[KALMAN] Using predicted position: ({int(predicted_x)}, {int(predicted_y)}), {len(person.predicted_trajectory)} predictions remaining")
+            if not person.predicted_trajectory:
                 logger.info(f"[KALMAN] All predicted positions used up.")
-                selected_id_container["center_history"].append((int(predicted_x), int(predicted_y)))
+                person.center_history.append((int(predicted_x), int(predicted_y)))
         else:
             # No predictions available, use last known coords from center_history
-            if selected_id_container["center_history"]:
+            if person.center_history:
                 # Use the last item in center_history - this is the last seen center
-                center_x, center_y = selected_id_container["center_history"][-1]
-                selected_id_container["last_seen_center_coords"] = (center_x, center_y)
+                center_x, center_y = person.center_history[-1]
+                person.last_seen_center_coords = (center_x, center_y)
                 logger.info(f"[KALMAN] No predictions available, using last known position from history: ({center_x}, {center_y})")
             else:
                 # Edge case: no history and no predictions (person selected but never seen)
-                selected_id_container["last_seen_center_coords"] = None
+                person.last_seen_center_coords = None
                 logger.error(f"[KALMAN] No predictions and no center history available - template matching will fail")
         
         is_id_found = True
@@ -680,11 +661,11 @@ def find_id_in_frame(results, selected_id_container, persons_dict, all_persons_i
         logger.warning(f"Frame: ID {target_id} not found in this frame.")
         # Only clear followed_id if template matching also failed
         if not target_id:  # target_id is None, meaning template matching failed too
-            selected_id_container["followed_id"] = None
-        selected_id_container["id"] = []        
-        selected_id_container["coords"] = None  # Clear coordinates when target is lost
-        selected_id_container["predicted_trajectory"] = []  # Clear any remaining predictions
-        selected_id_container["lost_rounds"] = 0
+            person.followed_id = None
+        person.id = []        
+        person.coords = None  # Clear coordinates when target is lost
+        person.predicted_trajectory = []  # Clear any remaining predictions
+        person.lost_rounds = 0
         logger.info("[INPUT] Please enter a new ID to select.")
         is_id_found = False
     
@@ -1080,21 +1061,21 @@ def update_objects_dict(all_objects_in_frame, objects_dict, max_recent_extractio
             objects_dict[object_id] = objects_dict[object_id][-max_recent_extractions:]
 
 
-def find_new_id(template_dict, selected_id_container, all_objects_in_frame, all_persons_centers_dict, exclude_ids=None):
+def find_new_id(template_dict, person, all_objects_in_frame, all_persons_centers_dict, exclude_ids=None):
     """
-    Perform template matching to update best_match_candidates in container.
-    Does not return a replacement ID - instead updates the container's best_match_candidates dict.
+    Perform template matching to update best_match_candidates in person.
+    Does not return a replacement ID - instead updates the person's best_match_candidates dict.
     
     Args:
         template_dict: Dictionary of templates for each ID
-        selected_id_container: Container with the lost ID information
+        person: Person object with the lost ID information
         all_objects_in_frame: Current objects detected in frame
         all_persons_centers_dict: Dictionary of person IDs to their center coordinates
         exclude_ids: List of IDs to exclude from matching (e.g., the opposite tracked ID)
     """
-    selected_id_to_track = selected_id_container["followed_id"]
+    selected_id_to_track = person.followed_id
     templates = template_dict.get(selected_id_to_track, [])
-    selected_id_last_center = selected_id_container.get("last_seen_center_coords", None)
+    selected_id_last_center = person.last_seen_center_coords
 
     if exclude_ids is None:
         exclude_ids = []
@@ -1130,24 +1111,24 @@ def find_new_id(template_dict, selected_id_container, all_objects_in_frame, all_
         logger.info(f"[TEMPLATE_MATCHING] No valid objects after excluding IDs {exclude_ids}")
         return
     
-    # Update best_match_candidates in container (does not return a value)
-    template_matching.find_best_match(selected_id_container, objects_for_matching, templates, selected_id_last_center, all_persons_centers_dict)
+    # Update best_match_candidates in person (does not return a value)
+    template_matching.find_best_match(person, objects_for_matching, templates, selected_id_last_center, all_persons_centers_dict)
 
 
-def choose_best_match(container, current_ids_in_frame):
+def choose_best_match(person, current_ids_in_frame):
     """
     Selects the ID with the lowest score from best_match_candidates that is currently in the frame.
     Returns ID if score is below threshold and ID is in frame, None otherwise.
     Always clears the candidates dict.
     """
-    candidates = container.get("best_match_candidates", {})
+    candidates = person.best_match_candidates
     
     logger.info(f"[TEMPLATE_MATCHING] === WINDOW EXPIRED - CHOOSING BEST MATCH ===")
     logger.info(f"[TEMPLATE_MATCHING] All accumulated candidates over window: {candidates}")
     logger.info(f"[TEMPLATE_MATCHING] IDs currently in frame: {current_ids_in_frame}")
     
     # Always clear the dict at the end of the window
-    container["best_match_candidates"] = {}
+    person.best_match_candidates = {}
     
     if not candidates:
         logger.info(f"[TEMPLATE_MATCHING] No candidates accumulated during window")
@@ -1177,19 +1158,19 @@ def choose_best_match(container, current_ids_in_frame):
         return None
 
 
-def get_coords(container):
-    coords = container.get("coords")
-    lost_counter = container.get("lost_counter", 0)
+def get_coords(person):
+    coords = person.coords
+    lost_counter = person.lost_counter
 
     if coords and lost_counter > 0:
         coords = None
 
     return coords
 
-def init_input_thread(selected_id_container, target_id_container, user_getter_thread):
-    if((not selected_id_container["id"]) and not is_alive(user_getter_thread)):
-        user_getter_thread = init_id_getter_thread(selected_id_container, target_id_container)
-    return user_getter_thread
+def init_input_thread(current_person, other_person, current_getter_thread):
+    if((not current_person.id) and not is_alive(current_getter_thread)):
+        current_getter_thread = init_id_getter_thread(current_person, other_person)
+    return current_getter_thread
 
 
 class PerformanceMonitor:
@@ -1383,30 +1364,9 @@ def main():
     logger.info(f"Log file: {LOG_FILENAME}")
     logger.info("="*60)
 
-    # thread for id selection 
-    selected_id_container = {
-        "id": [], 
-        "history": [], 
-        "id_was_seen": False, 
-        "lost_counter": 0, 
-        "followed_id": None, 
-        "coords": None,
-        "center_history": [],  # History of (center_x, center_y) for the last COORDINATE_HISTORY_SIZE frames
-        "predicted_trajectory": [],  # Kalman filter predicted positions when person is lost
-        "best_match_candidates": {}  # Accumulates {id: score} over lost frames window
-    }
-    selected_target_container = {
-        "id": [],  # Target uses list like selected_id for consistency
-        "history": [], 
-        "id_was_seen": False, 
-        "lost_counter": 0, 
-        "followed_id": None, 
-        "coords": None,
-        "target_class": None,  # Will be set once we identify the target object type
-        "center_history": [],  # History of (center_x, center_y) for the last COORDINATE_HISTORY_SIZE frames
-        "predicted_trajectory": [],  # Kalman filter predicted positions when person is lost
-        "best_match_candidates": {}  # Accumulates {id: score} over lost frames window
-    }
+    # Create Person objects for tracking
+    selected_person = Person(person_type="USER")
+    target_person = Person(person_type="TARGET")
 
     persons_dict = {}  # Template dictionary for persons (used for both following and target tracking)
     model = YOLO("./yolo_models/yolo11s-seg.pt")
@@ -1483,9 +1443,7 @@ def main():
 
                 annotated_frame = results[0].plot(line_width=1)
                 
-                # Update target class information if we have a target
-                if TARGET_TRACKING_ENABLED and selected_target_container["id"]:
-                    update_target_class(selected_target_container, results)
+
                 
                 if perf_monitor:
                     perf_monitor.end_yolo()
@@ -1536,31 +1494,29 @@ def main():
                     # No YOLO results yet, just show the raw frame
                     annotated_frame = frame.copy()
 
-            user_getter_thread = init_input_thread(selected_id_container, selected_target_container, user_getter_thread)
+            user_getter_thread = init_input_thread(selected_person, target_person, user_getter_thread)
 
             # Initialize variables
             is_id_found = False
             is_target_found = False
 
             # Only process tracking if we have valid YOLO results
-            if results is not None and selected_id_container["id"]:
+            if results is not None and selected_person.id:
                 # Target tracking logic (controlled by TARGET_TRACKING_ENABLED flag)
                 if TARGET_TRACKING_ENABLED:
                     # Use different input thread for target (asks for target objects)
-                    if((not selected_target_container["id"]) and not is_alive(target_getter_thread)):
-                        target_getter_thread = threading.Thread(target=target_thread, args=(selected_target_container, selected_id_container))
-                        target_getter_thread.daemon = True
-                        target_getter_thread.start()
+                    target_getter_thread = init_input_thread(target_person, selected_person, target_getter_thread)
+                    
                     #follow target - now with template matching support
                     # Exclude selected ID history from target template matching
                     # Only use persons for template matching (persons_dict is used for both selected and target)
-                    is_target_found = find_id_in_frame(results, selected_target_container, persons_dict, all_persons_in_frame, all_persons_centers_dict,
-                                                       exclude_ids=selected_id_container["history"], tracking_type="Target")
+                    is_target_found = find_id_in_frame(results, target_person, persons_dict, all_persons_in_frame, all_persons_centers_dict,
+                                                       exclude_ids=selected_person.history, tracking_type="Target")
                 
-                # saves the coordinates in container IMPORTANT DONT COMMENT
+                # saves the coordinates in person IMPORTANT DONT COMMENT
                 # Exclude target ID history from selected template matching
-                is_id_found = find_id_in_frame(results, selected_id_container, persons_dict, all_persons_in_frame, all_persons_centers_dict,
-                                               exclude_ids=selected_target_container["history"], tracking_type="Selected")
+                is_id_found = find_id_in_frame(results, selected_person, persons_dict, all_persons_in_frame, all_persons_centers_dict,
+                                               exclude_ids=target_person.history, tracking_type="Selected")
                 # TODO: pivot to new function that will take care of scanning the potential target objects
 
             # Display detected objects (persons and cars)
@@ -1578,16 +1534,16 @@ def main():
                     logger.info(f"[DETECTED] {objects_str}")
 
             # Show both original input ID and currently followed ID (may differ after template matching)
-            selected_input = selected_id_container['id']
-            selected_following = selected_id_container.get('followed_id')
+            selected_input = selected_person.id
+            selected_following = selected_person.followed_id
             if selected_following and selected_following not in selected_input:
                 logger.info(f"[Selected ID] Input: {selected_input}, Currently Following: {selected_following}")
             else:
                 logger.info(f"[Selected ID] {selected_input}")
             
             if TARGET_TRACKING_ENABLED:
-                target_input = selected_target_container['id']
-                target_following = selected_target_container.get('followed_id')
+                target_input = target_person.id
+                target_following = target_person.followed_id
                 if target_following and target_following not in target_input:
                     logger.info(f"[Target ID] Input: {target_input}, Currently Following: {target_following}")
                 else:
@@ -1596,11 +1552,11 @@ def main():
             # Get target coordinates if target tracking is enabled
             target_coords = None
             if(is_target_found):
-                target_coords = get_coords(selected_target_container)
+                target_coords = get_coords(target_person)
                 if target_coords is not None:
                     x1, y1, x2, y2, target_center_x, target_center_y = target_coords
                     # Get target object info
-                    target_info = get_object_info(results, selected_target_container.get("followed_id"))
+                    target_info = get_object_info(results, target_person.followed_id)
                     if target_info:
                         logger.info(f"Target ({target_info['class_name']}) Center coordinates: ({target_center_x}, {target_center_y})")
                     else:
@@ -1610,7 +1566,7 @@ def main():
             #TODO - add path finding between user and target
 
             # Get coordinates directly (no interpolation)
-            coords = get_coords(selected_id_container)
+            coords = get_coords(selected_person)
 
             drone.left_right_velocity, drone.for_back_velocity, drone.up_down_velocity, drone.yaw_velocity = control_drone(drone, coords, annotated_frame, HISTEREZIS_ENABLED, histerezis_on)
             
@@ -1625,17 +1581,17 @@ def main():
             move_drone(drone)
 
             # Get last seen coordinates for visualization when persons are lost
-            selected_last_seen = selected_id_container.get("last_seen_center_coords")
-            target_last_seen = selected_target_container.get("last_seen_center_coords") if TARGET_TRACKING_ENABLED else None
+            selected_last_seen = selected_person.last_seen_center_coords
+            target_last_seen = target_person.last_seen_center_coords if TARGET_TRACKING_ENABLED else None
             
             # Get current RRT path for drawing on annotated frame
             current_rrt_path = None
             if rrt_planner:
-                selected_actually_present = (selected_id_container.get("lost_counter", 0) == 0 and 
-                                            selected_id_container.get("coords") is not None)
+                selected_actually_present = (selected_person.lost_counter == 0 and 
+                                            selected_person.coords is not None)
                 target_actually_present = (TARGET_TRACKING_ENABLED and 
-                                          selected_target_container.get("lost_counter", 0) == 0 and 
-                                          selected_target_container.get("coords") is not None)
+                                          target_person.lost_counter == 0 and 
+                                          target_person.coords is not None)
                 both_ids_present = selected_actually_present and (target_actually_present if TARGET_TRACKING_ENABLED else False)
                 
                 if both_ids_present:
@@ -1664,16 +1620,16 @@ def main():
             
             # Create and write BW segmented frame with selected/target as colored dots and RRT* path
             if results is not None:
-                selected_followed_id = selected_id_container.get("followed_id")
-                target_followed_id = selected_target_container.get("followed_id") if TARGET_TRACKING_ENABLED else None
+                selected_followed_id = selected_person.followed_id
+                target_followed_id = target_person.followed_id if TARGET_TRACKING_ENABLED else None
                 
                 # Check if IDs are actually present in the current frame (not just tracked with lost counter)
                 # This ensures path is deleted immediately when ID disappears, not after MAX_LOST_ID_FRAMES
-                selected_actually_present = (selected_id_container.get("lost_counter", 0) == 0 and 
-                                            selected_id_container.get("coords") is not None)
+                selected_actually_present = (selected_person.lost_counter == 0 and 
+                                            selected_person.coords is not None)
                 target_actually_present = (TARGET_TRACKING_ENABLED and 
-                                          selected_target_container.get("lost_counter", 0) == 0 and 
-                                          selected_target_container.get("coords") is not None)
+                                          target_person.lost_counter == 0 and 
+                                          target_person.coords is not None)
                 
                 # Get latest calculated path (non-blocking)
                 # This returns the last calculated path (cached) if no new path is ready
