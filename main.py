@@ -170,18 +170,7 @@ class Person:
         self.last_seen_center_coords = None
         self.predicted_trajectory = []
 
-    def is_person_class(self, results):
-        """
-        Checks if the ID is a person class in the results.
-        Returns True if the ID is a person class, False otherwise.
-        """
-        for box in results[0].boxes:
-            if hasattr(box, 'id') and box.id is not None:
-                box_id = int(box.id.item()) if hasattr(box.id, 'item') else int(box.id)
-                if box_id == self.followed_id:
-                    return int(box.cls.item()) == 0
 
-        return False
 
 TIMESTAMP = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 # Create videos directory if it doesn't exist
@@ -359,8 +348,20 @@ def shutdown_drone(drone):
     drone.land()
     return
     
+def is_person_class(results, id):
+    """
+    Checks if the ID is a person class in the results.
+    Returns True if the ID is a person class, False otherwise.
+    """
+    for box in results[0].boxes:
+        if hasattr(box, 'id') and box.id is not None:
+            box_id = int(box.id.item()) if hasattr(box.id, 'item') else int(box.id)
+            if box_id == id:
+                return int(box.cls.item()) == 0
 
-def input_thread(current_person, other_person):
+    return False
+
+def input_thread(current_person, other_person, results):
     user_input = input(f"[INPUT] Enter {current_person.type.capitalize()} Person ID to follow: ")
     try:
         selected_id = int(user_input)
@@ -371,7 +372,10 @@ def input_thread(current_person, other_person):
             logger.warning(f"Rejected {current_person.type} ID {selected_id} - same as {other_person.type} ID")
             return
         
-        current_person.followed_id = selected_id
+        if not is_person_class(results, selected_id):
+            logger.error(f"ID {selected_id} is not a person. Skipping tracking.")
+            return
+        
         current_person.id.append(selected_id)
         current_person.history.append(selected_id)
         current_person.reset_details_on_new_id()
@@ -383,11 +387,11 @@ def input_thread(current_person, other_person):
 
 
 # TODO check its generic func
-def init_id_getter_thread(selected_person, target_person):
+def init_id_getter_thread(selected_person, target_person, results):
     """
     Initializes and starts a background thread to continuously get user input for selected ID.
     """
-    thread = threading.Thread(target=input_thread, args=(selected_person, target_person))
+    thread = threading.Thread(target=input_thread, args=(selected_person, target_person, results))
     thread.daemon = True
     thread.start()
     return thread
@@ -485,7 +489,7 @@ def get_object_info(results, target_id):
     return None
 
 
-def get_target_id_in_frame(results, target_ids):
+def get_selected_id_in_frame(results, target_ids):
     """
     Returns the first target ID found in the frame that is in target_ids list.
     Only returns IDs that are persons (class 0).
@@ -538,19 +542,12 @@ def find_id_in_frame(results, person, persons_dict, all_persons_in_frame, all_pe
     if exclude_ids is None:
         exclude_ids = []
 
-    target_id = get_target_id_in_frame(results, person.history)
-    logger.debug(f"Initial target_id from frame: {target_id}")
-    logger.debug(f"Current followed_id: {person.followed_id}")
-    logger.debug(f"ID was seen before: {person.id_was_seen}")
-    
-    if not person.is_person_class(results):
-        logger.error(f"[{tracking_type}] ID {person.id} is not a person. Skipping tracking.")
-        return False
+    selected_id = get_selected_id_in_frame(results, person.history)
 
-    # enters here in case target_id that appeared in past frames was lost
-    if not target_id and person.id_was_seen:
+    # enters here in case selected_id that appeared in past frames was lost
+    if not selected_id and person.id_was_seen:
         # in case window is over, take the best template matching result below threshold.
-        # if no result found, go to next round. if max rounds reached, enter the target_id manually.
+        # if no result found, go to next round. if max rounds reached, enter the selected_id manually.
         if person.lost_counter % TEMPLATE_M_WAITING_FRAMES_WINDOW == 0 and person.lost_counter != 0:
             person.lost_rounds += 1
             followed_id = person.followed_id
@@ -558,35 +555,38 @@ def find_id_in_frame(results, person, persons_dict, all_persons_in_frame, all_pe
             # Get current IDs in frame for filtering candidates
             current_ids_in_frame = get_ids_in_frame(results)
             # Note: choose_best_match will clear best_match_candidates automatically
-            target_id = choose_best_match(person, current_ids_in_frame)
-            if target_id is None:
+            selected_id = choose_best_match(person, current_ids_in_frame)
+            if selected_id is None:
                 logger.info(f"[{tracking_type}] No suitable template match found, going to next round.")
-                #if max rounds reached, enter the target_id manually
+                #if max rounds reached, enter the selected_id manually
                 if person.lost_rounds == MAX_LOST_ROUNDS:
                     # Prompt user for new ID input
                     logger.warning(f"[{tracking_type}] All {MAX_LOST_ROUNDS} rounds finished without a match. Manual ID entry required.")
             else:
-                logger.info(f"[{tracking_type}] Best match ID {target_id} passed threshold!")
+                logger.info(f"[{tracking_type}] Best match ID {selected_id} passed threshold!")
                 # Update person with the new followed ID
-                person.followed_id = target_id
-                person.history.append(target_id)
+                person.followed_id = selected_id
+                person.history.append(selected_id)
                 person.center_history = []
                 person.lost_rounds = 0
-                logger.info(f"[{tracking_type}] ✓ Re-acquired! Old ID: {followed_id}, New ID: {target_id}")
+                logger.info(f"[{tracking_type}] ✓ Re-acquired! Old ID: {followed_id}, New ID: {selected_id}")
         # in case window isnt over, do template matching and append scores to a dict
         else:
             logger.debug(f"Target not found in frame, attempting template matching...")
             # Keep the old followed_id for template matching, don't overwrite it yet
             find_new_id(persons_dict, person, all_persons_in_frame, all_persons_centers_dict, exclude_ids)
-            logger.debug(f"Template matching result: {target_id}")
+            logger.debug(f"Template matching result: {selected_id}")
 
+    # Only update followed_id when we have a valid selected_id (don't overwrite with None)
+    if selected_id:
+        logger.debug(f"Updating followed_id from {person.followed_id} to {selected_id}")
+        person.followed_id = selected_id
 
-    # Only update followed_id when we have a valid target_id (don't overwrite with None)
-    if target_id:
-        logger.debug(f"Updating followed_id from {person.followed_id} to {target_id}")
-        person.followed_id = target_id
-    
-    # Use followed_id to get coordinates (this persists even when target_id is None during template matching)
+    logger.debug(f"Initial selected_id from frame: {selected_id}")
+    logger.debug(f"Current followed_id: {person.followed_id}")
+    logger.debug(f"ID was seen before: {person.id_was_seen}")
+
+    # Use followed_id to get coordinates (this persists even when selected_id is None during template matching)
     coords = get_coordinates_by_id(results, person.followed_id)
     
     # if id is found -> we have coords of this person
@@ -658,9 +658,9 @@ def find_id_in_frame(results, person, persons_dict, all_persons_in_frame, all_pe
         
         is_id_found = True
     else:
-        logger.warning(f"Frame: ID {target_id} not found in this frame.")
+        logger.warning(f"Frame: ID {selected_id} not found in this frame.")
         # Only clear followed_id if template matching also failed
-        if not target_id:  # target_id is None, meaning template matching failed too
+        if not selected_id:  # selected_id is None, meaning template matching failed too
             person.followed_id = None
         person.id = []        
         person.coords = None  # Clear coordinates when target is lost
@@ -1159,9 +1159,9 @@ def choose_best_match(person, current_ids_in_frame):
         return None
 
 
-def init_input_thread(current_person, other_person, current_getter_thread):
+def init_input_thread(current_person, other_person, current_getter_thread, results):
     if((not current_person.id) and not is_alive(current_getter_thread)):
-        current_getter_thread = init_id_getter_thread(current_person, other_person)
+        current_getter_thread = init_id_getter_thread(current_person, other_person, results)
     return current_getter_thread
 
 
@@ -1400,7 +1400,7 @@ def main():
             # Only persons (class 0) are used for template matching
             all_persons_in_frame, all_persons_centers_dict = update_templates(results, frame, persons_dict)
                 
-            user_getter_thread = init_input_thread(selected_person, target_person, user_getter_thread)
+            user_getter_thread = init_input_thread(selected_person, target_person, user_getter_thread, results)
 
             # Initialize variables
             is_id_found = False
@@ -1411,7 +1411,7 @@ def main():
                 # Target tracking logic (controlled by TARGET_TRACKING_ENABLED flag)
                 if TARGET_TRACKING_ENABLED:
                     # Use different input thread for target (asks for target objects)
-                    target_getter_thread = init_input_thread(target_person, selected_person, target_getter_thread)
+                    target_getter_thread = init_input_thread(target_person, selected_person, target_getter_thread, results)
                     
                     #follow target - now with template matching support
                     # Exclude selected ID history from target template matching
