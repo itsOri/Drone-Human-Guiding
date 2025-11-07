@@ -36,7 +36,8 @@ def pre_proccess(image, template_width):
     if(np.std(image) != 0):
         image = image / np.std(image)
     image = cv2.GaussianBlur(image, (KERNEL_SIZE, KERNEL_SIZE), 0)  # kernel size (5,5), sigma=0
-
+    image = cv2.equalizeHist(image)
+    
     return image
 
 def perform_correlation(template_obj, image):
