@@ -213,10 +213,10 @@ HEIGHT = 480
 selected_id = None
 
 RECT_CENTER = (WIDTH // 2, HEIGHT // 2 + 120)
-rect_size = {"w": 70, "h": 70}
+RECT_SIZE = {"w": 70, "h": 70}
 MIN_RECT_SIZE = 50
-CONST_RECT_TOP_LEFT = (RECT_CENTER[0] - rect_size['w'] // 2, RECT_CENTER[1] - rect_size['h'] // 2)
-CONST_RECT_BOTTOM_RIGHT = (RECT_CENTER[0] + rect_size['w'] // 2, RECT_CENTER[1] + rect_size['h'] // 2)
+CONST_RECT_TOP_LEFT = (RECT_CENTER[0] - RECT_SIZE['w'] // 2, RECT_CENTER[1] - RECT_SIZE['h'] // 2)
+CONST_RECT_BOTTOM_RIGHT = (RECT_CENTER[0] + RECT_SIZE['w'] // 2, RECT_CENTER[1] + RECT_SIZE['h'] // 2)
 DYNAMIC_RECT = False
 SAVE_FILE = True
 HISTEREZIS_ENABLED = True # Fixed hysteresis logic to prevent ping-pong behavior
@@ -224,7 +224,6 @@ TARGET_TRACKING_ENABLED = True # Set to True to enable target selection and trac
 
 
 # === PERFORMANCE OPTIMIZATION SETTINGS ===
-YOLO_FRAME_SKIP = 1  # Process every Nth frame (1=every frame, 2=every 2nd frame, 3=every 3rd frame)
 TEMPLATE_MATCHING_FRAME_SKIP = 1  # Update templates every Nth YOLO frame (reduces template collection frequency)
 ENABLE_PERFORMANCE_MONITORING = True  # Show FPS and processing time stats
 
@@ -241,8 +240,8 @@ RRT_PATH_COLOR = (255, 0, 255)  # Magenta/Purple color for path (BGR)
 
 BLACK = (0, 0, 0)
 
-YAW_MOVING_VELOCITY = 4
-FB_MOVING_VELOCITY = 15
+YAW_MOVING_VELOCITY = 5
+FB_MOVING_VELOCITY = 5
 DRONE_START_HEIGHT = 70 # 200 is good for outside, 70 for inside , 450 good outside
 MAX_LOST_ID_FRAMES = 20
 COORDINATE_HISTORY_SIZE = 30  # Number of frames to keep coordinate history for tracked persons
@@ -284,12 +283,12 @@ def open_log_in_editor(log_filename):
 def RECT_TOP_LEFT():
     if(DYNAMIC_RECT is False): 
         return CONST_RECT_TOP_LEFT
-    return (RECT_CENTER[0] - rect_size['w'] // 2, RECT_CENTER[1] - rect_size['h'] // 2)
+    return (RECT_CENTER[0] - RECT_SIZE['w'] // 2, RECT_CENTER[1] - RECT_SIZE['h'] // 2)
 
 def RECT_BOTTOM_RIGHT():
     if(DYNAMIC_RECT is False): 
         return CONST_RECT_BOTTOM_RIGHT
-    return (RECT_CENTER[0] + rect_size['w'] // 2, RECT_CENTER[1] + rect_size['h'] // 2)
+    return (RECT_CENTER[0] + RECT_SIZE['w'] // 2, RECT_CENTER[1] + RECT_SIZE['h'] // 2)
 
 def start_drone():
     drone = Tello()
@@ -612,6 +611,7 @@ def find_id_in_frame(results, person, persons_dict, all_persons_in_frame, all_pe
         person.reset_when_seen()
     elif person.id_was_seen and person.lost_rounds < MAX_LOST_ROUNDS:
         person.lost_counter += 1
+        person.coords = None  # Clear coordinates immediately when person is lost
         followed_id = person.followed_id
         logger.info(f"[{tracking_type}] ID {followed_id} lost. Counter: {person.lost_counter}/{TEMPLATE_M_WAITING_FRAMES_WINDOW}, Round: {person.lost_rounds}/{MAX_LOST_ROUNDS}")
         logger.info(f"[{tracking_type}] Current best_match_candidates: {person.best_match_candidates}")
@@ -722,16 +722,18 @@ def control_drone(drone, coords, frame, histerezis_enabled, histerezis_on):
     
     x1, y1, x2, y2, center_x, center_y = coords
     min_object_size = max(MIN_RECT_SIZE, min(y2-y1, x2-x1))
-    rect_size['w'], rect_size['h'] = min_object_size, min_object_size
-    logger.debug(f"Rectangle size: w={rect_size['w']}, h={rect_size['h']}")
+    RECT_SIZE['w'], RECT_SIZE['h'] = min_object_size, min_object_size
+    logger.debug(f"Rectangle size: w={RECT_SIZE['w']}, h={RECT_SIZE['h']}")
 
     # Y-axis control with improved hysteresis
-    hysteresis_margin = rect_size['h'] // 4  # 25% of rectangle height for hysteresis
+    hysteresis_margin = RECT_SIZE['h'] // 3  # 25% of rectangle height for hysteresis
     
     if histerezis_enabled:
+        histerezis_margin_y = RECT_SIZE['h'] // 3
+        histerezis_margin_x = RECT_SIZE['w'] // 3
         # Forward movement logic with hysteresis
         if center_y < RECT_TOP_LEFT()[1] or histerezis_on["up"]:
-            if center_y < RECT_TOP_LEFT()[1] + hysteresis_margin:  # Continue until well inside
+            if center_y < RECT_TOP_LEFT()[1] + histerezis_margin_y:  # Continue until well inside
                 cv2.putText(frame, "FORWARD", 
                             (RECT_TOP_LEFT()[0] + 20, RECT_TOP_LEFT()[1] - 20), 
                             cv2.FONT_HERSHEY_SIMPLEX, 1, BLACK, 2)
@@ -743,7 +745,7 @@ def control_drone(drone, coords, frame, histerezis_enabled, histerezis_on):
                 drone.for_back_velocity = 0
         # Backward movement logic with hysteresis
         elif center_y > RECT_BOTTOM_RIGHT()[1] or histerezis_on["down"]:
-            if center_y > RECT_BOTTOM_RIGHT()[1] - hysteresis_margin:  # Continue until well inside
+            if center_y > RECT_BOTTOM_RIGHT()[1] - histerezis_margin_y:  # Continue until well inside
                 cv2.putText(frame, "BACKWARD", 
                             (RECT_TOP_LEFT()[0] + 20, RECT_TOP_LEFT()[1] - 20), 
                             cv2.FONT_HERSHEY_SIMPLEX, 1, BLACK, 2)
@@ -774,12 +776,11 @@ def control_drone(drone, coords, frame, histerezis_enabled, histerezis_on):
 
 
     # X-axis control with improved hysteresis
-    hysteresis_margin_x = rect_size['w'] // 4  # 25% of rectangle width for hysteresis
     
     if histerezis_enabled:
         # Left rotation logic with hysteresis
         if center_x < RECT_TOP_LEFT()[0] or histerezis_on["left"]:
-            if center_x < RECT_TOP_LEFT()[0] + hysteresis_margin_x:  # Continue until well inside
+            if center_x < RECT_TOP_LEFT()[0] + histerezis_margin_x:  # Continue until well inside
                 cv2.putText(frame, "<- ROTATE LEFT <-",
                     (RECT_TOP_LEFT()[0] - 110, (RECT_TOP_LEFT()[1] + RECT_BOTTOM_RIGHT()[1]) // 2),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, BLACK, 2)
@@ -791,7 +792,7 @@ def control_drone(drone, coords, frame, histerezis_enabled, histerezis_on):
                 drone.yaw_velocity = 0
         # Right rotation logic with hysteresis
         elif center_x > RECT_BOTTOM_RIGHT()[0] or histerezis_on["right"]:
-            if center_x > RECT_BOTTOM_RIGHT()[0] - hysteresis_margin_x:  # Continue until well inside
+            if center_x > RECT_BOTTOM_RIGHT()[0] - histerezis_margin_x:  # Continue until well inside
                 cv2.putText(frame, "-> ROTATE RIGHT ->",
                             (RECT_BOTTOM_RIGHT()[0] + 20, (RECT_TOP_LEFT()[1] + RECT_BOTTOM_RIGHT()[1]) // 2),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, BLACK, 2)
@@ -1158,69 +1159,12 @@ def choose_best_match(person, current_ids_in_frame):
         return None
 
 
-def get_coords(person):
-    coords = person.coords
-    lost_counter = person.lost_counter
-
-    if coords and lost_counter > 0:
-        coords = None
-
-    return coords
-
 def init_input_thread(current_person, other_person, current_getter_thread):
     if((not current_person.id) and not is_alive(current_getter_thread)):
         current_getter_thread = init_id_getter_thread(current_person, other_person)
     return current_getter_thread
 
 
-class PerformanceMonitor:
-    def __init__(self):
-        self.frame_times = []
-        self.yolo_times = []
-        self.template_times = []
-        self.last_fps_print = time.time()
-        self.frame_count = 0
-        
-    def start_frame(self):
-        self.frame_start = time.time()
-        
-    def start_yolo(self):
-        self.yolo_start = time.time()
-        
-    def end_yolo(self):
-        if hasattr(self, 'yolo_start'):
-            self.yolo_times.append(time.time() - self.yolo_start)
-            
-    def start_template(self):
-        self.template_start = time.time()
-        
-    def end_template(self):
-        if hasattr(self, 'template_start'):
-            self.template_times.append(time.time() - self.template_start)
-            
-    def end_frame(self):
-        if hasattr(self, 'frame_start'):
-            self.frame_times.append(time.time() - self.frame_start)
-            self.frame_count += 1
-            
-        # Print stats every 5 seconds
-        if time.time() - self.last_fps_print > 5.0:
-            self.print_stats()
-            self.last_fps_print = time.time()
-            
-    def print_stats(self):
-        if self.frame_times:
-            avg_fps = 1.0 / (sum(self.frame_times[-30:]) / min(30, len(self.frame_times)))
-            avg_frame_time = sum(self.frame_times[-30:]) / min(30, len(self.frame_times)) * 1000
-            
-            yolo_time = 0
-            template_time = 0
-            if self.yolo_times:
-                yolo_time = sum(self.yolo_times[-10:]) / min(10, len(self.yolo_times)) * 1000
-            if self.template_times:
-                template_time = sum(self.template_times[-10:]) / min(10, len(self.template_times)) * 1000
-                
-            logger.info(f"[PERFORMANCE] FPS: {avg_fps:.1f} | Frame: {avg_frame_time:.1f}ms | YOLO: {yolo_time:.1f}ms | Templates: {template_time:.1f}ms")
 
 
 class RRTPathPlanner:
@@ -1343,17 +1287,7 @@ class RRTPathPlanner:
         logger.info("[RRT*] Path planner thread stopped")
 
 
-def main():
-    # Print to terminal only - inform user where logs are saved
-    print("="*60)
-    print(f"Drone Control System Starting...")
-    print(f"Log file: {LOG_FILENAME}")
-    print("="*60)
-    print()
-    
-    open_log_in_editor(LOG_FILENAME)
-
-
+def init_logs():
     logger.info("="*60)
     logger.info("DRONE CONTROL SYSTEM STARTED")
     logger.info(f"Timestamp: {TIMESTAMP}")
@@ -1364,12 +1298,37 @@ def main():
     logger.info(f"Log file: {LOG_FILENAME}")
     logger.info("="*60)
 
+def update_templates(results, frame, persons_dict):
+    """
+    Update the templates logic.
+    """
+    all_persons_in_frame, all_persons_centers_dict = template_matching.extract_all_visible_persons(results, frame)
+    if all_persons_in_frame:
+        template_matching.update_persons_dict(all_persons_in_frame, persons_dict, template_matching.MAX_RECENT_EXTRACTIONS)
+        template_counts = {pid: len(templates) for pid, templates in persons_dict.items()}
+        logger.info(f"[TEMPLATE_MATCHING] Person template counts: {template_counts}")
+        return all_persons_in_frame, all_persons_centers_dict
+    else:
+        logger.info(f"[TEMPLATE_MATCHING] No persons in frame")
+        return {}, {}
+
+def main():
+    # Print to terminal only - inform user where logs are saved
+    print("="*60)
+    print(f"Drone Control System Starting...")
+    print(f"Log file: {LOG_FILENAME}")
+    print("="*60)
+    print()
+    
+    open_log_in_editor(LOG_FILENAME)
+
+    init_logs()
+
     # Create Person objects for tracking
     selected_person = Person(person_type="USER")
     target_person = Person(person_type="TARGET")
 
     persons_dict = {}  # Template dictionary for persons (used for both following and target tracking)
-    model = YOLO("./yolo_models/yolo11s-seg.pt")
     
     # thread for id selection 
     user_getter_thread = None
@@ -1385,7 +1344,6 @@ def main():
     launch_drone(drone)
 
     # Performance monitoring
-    perf_monitor = PerformanceMonitor() if ENABLE_PERFORMANCE_MONITORING else None
     
     # RRT* path planner (threaded)
     rrt_planner = RRTPathPlanner() if ENABLE_RRT_PATH else None
@@ -1394,7 +1352,6 @@ def main():
     frame_counter = 0
     yolo_frame_counter = 0
     rrt_frame_counter = 0
-    last_yolo_results = None
 
     histerezis_on = {
         "down": False,
@@ -1403,16 +1360,13 @@ def main():
         "right": False
     }
     
-    logger.info(f"[OPTIMIZATION] YOLO processing every {YOLO_FRAME_SKIP} frames")
-    logger.info(f"[OPTIMIZATION] Template matching every {TEMPLATE_MATCHING_FRAME_SKIP} YOLO frames")
     logger.info(f"[TRACKING] Coordinate history size: {COORDINATE_HISTORY_SIZE} frames")
     if ENABLE_RRT_PATH:
         logger.info(f"[RRT*] Path planning enabled (threaded, async, every {RRT_FRAME_SKIP} frames)")
     
     try:
         while True:
-            if perf_monitor:
-                perf_monitor.start_frame()
+
                 
             frame_counter += 1
             frame = get_frame(drone)
@@ -1420,80 +1374,32 @@ def main():
                 logger.warning("No frame received.")
                 continue
             
-            # Determine if we should process YOLO on this frame
-            should_process_yolo = (frame_counter % YOLO_FRAME_SKIP == 0)
-            should_update_templates = (yolo_frame_counter % TEMPLATE_MATCHING_FRAME_SKIP == 0)
+            # Process YOLO on every frame
+            yolo_frame_counter += 1
             
-            if should_process_yolo:
-                if perf_monitor:
-                    perf_monitor.start_yolo()
-                    
-                yolo_frame_counter += 1
-                # logger.info(f"[OPTIMIZATION] Processing YOLO frame {yolo_frame_counter}")
-                
-                # Always detect person and car classes
-                class_names = [get_object_class_name(cls) for cls in BASE_DETECTION_CLASSES]
-                logger.info(f"[OPTIMIZATION] Detecting classes: {class_names} {BASE_DETECTION_CLASSES}")
-                
-                results = model.track(frame, persist=True, verbose=False, tracker="bytetrack.yaml", classes=BASE_DETECTION_CLASSES)
-                last_yolo_results = results
+            # Always detect person and car classes
+            class_names = [get_object_class_name(cls) for cls in BASE_DETECTION_CLASSES]
+            logger.info(f"[OPTIMIZATION] Detecting classes: {class_names} {BASE_DETECTION_CLASSES}")
+            
+            results = model.track(frame, persist=True, verbose=False, tracker="bytetrack.yaml", classes=BASE_DETECTION_CLASSES)
 
-                # filter out cars boxes from results
-                results[0].boxes = results[0].boxes[results[0].boxes.cls != 2]
+            # filter out cars boxes AND masks from results so will not be seen in the frame
+            # IMPORTANT: Must filter both boxes and masks to keep them synchronized!
+            car_indices = (results[0].boxes.cls == 2)
+            results[0].boxes = results[0].boxes[~car_indices]
+            
+            # Filter masks too if they exist
+            if results[0].masks is not None:
+                results[0].masks.data = results[0].masks.data[~car_indices]
 
-                annotated_frame = results[0].plot(line_width=1)
+            annotated_frame = results[0].plot(line_width=1)
+            
+            logger.info(f"[OPTIMIZATION] Updating templates (frame {yolo_frame_counter})")
+            
+            # Extract all persons visible in the current frame (for both following and target tracking)
+            # Only persons (class 0) are used for template matching
+            all_persons_in_frame, all_persons_centers_dict = update_templates(results, frame, persons_dict)
                 
-
-                
-                if perf_monitor:
-                    perf_monitor.end_yolo()
-                
-                # Template matching (only on selected YOLO frames)
-                if should_update_templates:
-                    if perf_monitor:
-                        perf_monitor.start_template()
-                        
-                    logger.info(f"[OPTIMIZATION] Updating templates (frame {yolo_frame_counter})")
-                    
-                    # Extract all persons visible in the current frame (for both following and target tracking)
-                    # Only persons (class 0) are used for template matching
-
-                    all_persons_in_frame, all_persons_centers_dict = template_matching.extract_all_visible_persons(results, frame)
-                    
-                    # Debug: Show extracted objects
-                    if all_persons_in_frame:
-                        logger.info(f"[TEMPLATE_MATCHING] Extracted {len(all_persons_in_frame)} persons: {list(all_persons_in_frame.keys())}")
-                    
-                    # Update template dictionaries (use same persons_dict for both selected and target)
-                    if all_persons_in_frame:
-                        template_matching.update_persons_dict(all_persons_in_frame, persons_dict, template_matching.MAX_RECENT_EXTRACTIONS)
-                        # Debug: Show current template counts
-                        template_counts = {pid: len(templates) for pid, templates in persons_dict.items()}
-                        if template_counts:
-                            logger.info(f"[TEMPLATE_MATCHING] Person template counts: {template_counts}")
-                    
-                    if perf_monitor:
-                        perf_monitor.end_template()
-                else:
-                    # Use empty dictionary when not updating templates
-                    all_persons_in_frame = {}
-                    all_persons_centers_dict = {}
-            else:
-                # Use last YOLO results and create annotated frame from original
-                results = last_yolo_results
-                all_persons_in_frame = {}
-                all_persons_centers_dict = {}
-                
-                # Draw previous detections on skipped frames if available
-                if results is not None and results[0].boxes is not None:
-                    # filter out cars boxes from results
-                    results[0].boxes = results[0].boxes[results[0].boxes.cls != 2]
-                    
-                    annotated_frame = results[0].plot(line_width=1)
-                else:
-                    # No YOLO results yet, just show the raw frame
-                    annotated_frame = frame.copy()
-
             user_getter_thread = init_input_thread(selected_person, target_person, user_getter_thread)
 
             # Initialize variables
@@ -1552,7 +1458,7 @@ def main():
             # Get target coordinates if target tracking is enabled
             target_coords = None
             if(is_target_found):
-                target_coords = get_coords(target_person)
+                target_coords = target_person.coords
                 if target_coords is not None:
                     x1, y1, x2, y2, target_center_x, target_center_y = target_coords
                     # Get target object info
@@ -1563,13 +1469,14 @@ def main():
                         logger.info(f"Target Center coordinates: ({target_center_x}, {target_center_y})")
                 else:
                     logger.warning("Target found but coordinates are None (target recently lost)")
-            #TODO - add path finding between user and target
 
             # Get coordinates directly (no interpolation)
-            coords = get_coords(selected_person)
+            coords = selected_person.coords
 
             drone.left_right_velocity, drone.for_back_velocity, drone.up_down_velocity, drone.yaw_velocity = control_drone(drone, coords, annotated_frame, HISTEREZIS_ENABLED, histerezis_on)
-            
+            logging.info(f"drone.for_back_velocity: {drone.for_back_velocity}, drone.yaw_velocity: {drone.yaw_velocity}, ")
+
+
             # keep alive command
             drone.send_control_command("command")
 
@@ -1607,6 +1514,13 @@ def main():
             # Draw frame addons with both selected ID (red) and target ID (green) points
             # When lost, draw last seen position in different colors (yellow for selected, cyan for target)
             draw_frame_addons(annotated_frame, coords, target_coords, selected_last_seen, target_last_seen)
+
+            # Draw frame counter on screen at top left
+            cv2.putText(annotated_frame, f"Frame: {frame_counter}", (10, 30), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
+            
+            # Log frame counter
+            logger.info(f"[FRAME] Frame counter: {frame_counter}")
 
             # cv2.imshow('Tello Video Feed', annotated_frame)
             cv2.imshow('Tello Video Feed', cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
@@ -1682,8 +1596,7 @@ def main():
                 shutdown_drone(drone)
                 break
 
-            if perf_monitor:
-                perf_monitor.end_frame()
+
 
             time.sleep(1/30)  # reduce CPU load, aiming for 30fps
 
