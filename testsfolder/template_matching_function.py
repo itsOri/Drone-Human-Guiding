@@ -2,6 +2,13 @@ import numpy as np
 import cv2
 
 def fix_size(image, template_width):
+    """
+    Resizes image to target width while preserving aspect ratio.
+    
+    :param image: Input image array
+    :param template_width: Target width
+    :return: Resized image
+    """
     h, w = image.shape[:2]
     aspect_ratio = h / w
     target_width = template_width
@@ -14,7 +21,13 @@ def fix_size(image, template_width):
 
 KERNEL_SIZE=31
 def pre_proccess(image, template_width):
-
+    """
+    Preprocesses image by resizing, normalizing, and applying Gaussian blur.
+    
+    :param image: Input image array
+    :param template_width: Target width to resize to (preserving aspect ratio)
+    :return: Preprocessed image
+    """
     image_width = image.shape[1]
     if(image_width != template_width):
         image = fix_size(image, template_width)
@@ -27,23 +40,65 @@ def pre_proccess(image, template_width):
     return image
 
 def perform_correlation(template_obj, image):
+    """
+    Performs correlation with horizontal sliding by padding the larger image.
+    
+    Note: Both images have the same width after resize. To allow horizontal sliding,
+    we add padding to enable template matching at different horizontal offsets.
+    """
+    # Calculate intersection area (width is same, height is min)
+    template_h, template_w = template_obj.shape[:2]
+    image_h, image_w = image.shape[:2]
+    
+    intersection_h = min(template_h, image_h)
+    intersection_area = intersection_h * template_w  # width is same for both
+    
+    # Calculate bigger image area
+    bigger_area = max(template_h * template_w, image_h * image_w)
+    
+    # Determine which is smaller (template) and larger (image) for padding
+    # Crop both to intersection height first
+    template_cropped = template_obj[:intersection_h, :]
+    image_cropped = image[:intersection_h, :]
+    
+    # Add horizontal padding to allow sliding (pad the larger image to enable template sliding)
+    # Padding amount: half of template width on each side
+    pad_x = template_w // 2
+    image_padded = cv2.copyMakeBorder(
+        image_cropped,
+        top=0, bottom=0,
+        left=pad_x, right=pad_x,
+        borderType=cv2.BORDER_CONSTANT,
+        value=[0, 0, 0]
+    )
+    
     #calc the sum of the squared pixels for each color separately
-    corr_obj_square_val = np.sum(template_obj ** 2, axis=(0, 1))
+    corr_obj_square_val = np.sum(template_cropped ** 2, axis=(0, 1))
 
-    output_image = np.zeros_like(image)
-    # Apply filter with constant border padding (default value 0)
+    output_image = np.zeros((intersection_h, image_padded.shape[1], 3), dtype=np.float32)
+    # Apply filter with the padded image to allow horizontal sliding
     for c in range(3):  # for R, G, B channels
         output_image[:, :, c] = cv2.filter2D(
-            src=image[:, :, c],
+            src=image_padded[:, :, c],
             ddepth=-1,  # same depth as source
-            kernel=template_obj[:, :, c],
+            kernel=template_cropped[:, :, c],
             borderType=cv2.BORDER_CONSTANT
         )
-    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(np.mean(np.abs(output_image- corr_obj_square_val), axis=2))
+    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(np.mean(np.abs(output_image - corr_obj_square_val), axis=2))
     
-    return min_val
+    # Apply penalty: bigger_image_area / intersection_area
+    penalty = bigger_area / intersection_area
+    
+    return min_val * penalty
 
 def rotate_template(image, degrees):
+    """
+    Rotates image by specified degrees around its center.
+    
+    :param image: Input image array
+    :param degrees: Rotation angle in degrees
+    :return: Rotated image
+    """
     # Get image dimensions
     height, width = image.shape[:2]
 
@@ -71,12 +126,16 @@ def template_match(template_obj, image):
                 where H_img >= H_obj and W_img>=W_obj, 
                 containing an image with the 'corr_obj' component in it.
     :return:
-        match_coord: the two center coordinates in 'img' 
-                     of the 'corr_obj' component.
+        normalized score between 0 and 1 (lower is better match)
     """
-    # Convert to float and normalize to [0, 1]
-    template_obj = pre_proccess(template_obj, template_obj.shape[1])
-    image = pre_proccess(image, template_obj.shape[1])
+    # Determine max width and resize smaller image to match larger
+    template_w = template_obj.shape[1]
+    image_w = image.shape[1]
+    target_width = max(template_w, image_w)
+    
+    # Convert to float and normalize to larger width
+    template_obj = pre_proccess(template_obj, target_width)
+    image = pre_proccess(image, target_width)
 
     deg_arr = [0,3,-3]
     min_vals_rot = np.zeros(len(deg_arr))
@@ -87,7 +146,12 @@ def template_match(template_obj, image):
     
     #print(min_vals_rot)
     min_val = min_vals_rot.min()
-    return min_val
+    
+    # Normalize to [0, 1] range with clamping
+    MAX_EXPECTED_SCORE = 10000.0  # Fixed range based on expected correlation values
+    normalized = min(1.0, min_val / MAX_EXPECTED_SCORE)
+    
+    return normalized
 
 
 # template = cv2.imread("photos/person_id_13_capture_1.png", cv2.COLOR_BGR2RGB)

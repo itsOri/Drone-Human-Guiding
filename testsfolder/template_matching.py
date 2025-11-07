@@ -28,10 +28,10 @@ except ImportError:
 # --- GLOBAL CONSTANTS & CONFIGURATION ---
 PERSON_OUTPUT_FOLDER = f'./persons_data_{datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}'
 #VIDEO_PATH = r"C:\Users\orifr\OneDrive - Technion\Documents\semester_f\project\drone_project_archives\Archive\clean_video_2025-10-17_17-25-20.avi"
-VIDEO_PATH = "../videos/clean_video_2025-10-31_12-56-59.avi"
+VIDEO_PATH = "../videos/clean_video_2025-11-06_14-09-11.avi"
 
 MAX_RECENT_EXTRACTIONS = 20
-THRESHOLD_BEST_MATCH = 1200
+THRESHOLD_BEST_MATCH = 0.12
 
 # --- MAIN DATA STORE ---
 # This dictionary will hold the image histories for ALL detected persons.
@@ -132,15 +132,21 @@ def update_persons_dict(all_persons_in_frame, persons_dict, max_extractions):
 			persons_dict[person_id].pop(0)
 
 
-def save_all_persons(persons_dict, base_output_folder):
+def save_all_persons(persons_dict, base_output_folder, input_format='BGR'):
 	"""
 	Saves all collected images from the persons_dict to disk, organized
 	in sub-folders by person ID.
+	
+	Args:
+		persons_dict: Dictionary of {person_id: [list of images]}
+		base_output_folder: Base folder path to save person images
+		input_format: Color format of input images - 'BGR' (default) or 'RGB'
+					  Images will be saved in correct format for file display
 	"""
 	if not persons_dict:
 		logger.info("Person dictionary is empty. Nothing to save.")
 		return
-	logger.info(f"Saving all collected person images to '{base_output_folder}'...")
+	logger.info(f"Saving all collected person images to '{base_output_folder}' (input format: {input_format})...")
 	os.makedirs(base_output_folder, exist_ok=True)
 	for person_id, image_list in persons_dict.items():
 		person_folder = os.path.join(base_output_folder, f"person_{person_id}")
@@ -148,22 +154,28 @@ def save_all_persons(persons_dict, base_output_folder):
 		logger.info(f"  > Saving {len(image_list)} images for Person ID {person_id}...")
 		for i, img in enumerate(image_list):
 			filename = os.path.join(person_folder, f"capture_{i+1}.png")
-			# Images are already in BGR format (extracted from OpenCV frame), so save directly
-			cv2.imwrite(filename, img)
+			# cv2.imwrite expects BGR format for correct file saving
+			if input_format == 'RGB':
+				# Convert RGB to BGR for cv2.imwrite
+				img_to_save = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+			else:
+				# Already in BGR format
+				img_to_save = img
+			cv2.imwrite(filename, img_to_save)
 	logger.info("All images saved successfully.")
 
 
 def get_distance_penalty(center1, center2):
     """
     Calculates an exponential penalty based on the Euclidean distance between two centers.
-    Penalty is in the range 0 to 10000.
+    Penalty is normalized in the range 0 to 1.
     """
     if center1 is None or center2 is None:
         return 0
     distance = np.linalg.norm(np.array(center1) - np.array(center2))
     # Scale and exponentiate: adjust alpha for sensitivity
     alpha = 0.002  # Tune this value for desired curve
-    penalty = int(10000 * (1 - np.exp(-alpha * distance)))
+    penalty = (1 - np.exp(-alpha * distance))
     return penalty
 
 def find_best_match(container, other_persons_dict, selected_id_templates, selected_id_last_center, all_persons_centers_dict):
@@ -220,10 +232,10 @@ def find_best_match(container, other_persons_dict, selected_id_templates, select
 	logger.info(f"[TEMPLATE_MATCHING] === DETAILED SCORE ANALYSIS ===")
 	for id in sorted(all_scores.keys()):
 		scores_info = detailed_scores[id]
-		logger.info(f"[TEMPLATE_MATCHING] ID {id:2d}: BEST={scores_info['best_score']:6.1f} | AVG={scores_info['avg_score']:6.1f} | WORST={scores_info['worst_score']:6.1f} | PENALTY={scores_info['penalty_score']:6.1f}")
+		logger.info(f"[TEMPLATE_MATCHING] ID {id:2d}: BEST={scores_info['best_score']:10.4f} | AVG={scores_info['avg_score']:10.4f} | WORST={scores_info['worst_score']:10.4f} | PENALTY={scores_info['penalty_score']:10.4f}")
 		# Log first few individual scores to see the range
 		sample_scores = scores_info['all_template_scores'][:5]  # Show first 5 template scores
-		logger.info(f"[TEMPLATE_MATCHING]      Sample scores: {[f'{s:.1f}' for s in sample_scores]}")
+		logger.info(f"[TEMPLATE_MATCHING]      Sample scores: {[f'{s:.4f}' for s in sample_scores]}")
 	
 	# Update best_match_candidates in container (keep minimum score for each ID)
 	best_match_candidates = container.get("best_match_candidates", {})
@@ -233,7 +245,7 @@ def find_best_match(container, other_persons_dict, selected_id_templates, select
 		if id not in best_match_candidates or score < best_match_candidates[id]:
 			# New ID or better score - update
 			best_match_candidates[id] = score
-			updates.append(f"ID {id}: {score:.1f}")
+			updates.append(f"ID {id}: {score:.4f}")
 	
 	container["best_match_candidates"] = best_match_candidates
 	
@@ -329,14 +341,17 @@ def setup_standalone_logging():
 	timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 	project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 	videos_dir = os.path.join(project_root, "videos")
+	os.makedirs(videos_dir, exist_ok=True)
 	log_filename = os.path.join(videos_dir, f'template_matching_log_{timestamp}.log')
 	
+	# Configure logging to match main.py format
 	logging.basicConfig(
-		level=logging.INFO,
-		format='%(asctime)s - %(levelname)s - %(message)s',
+		level=logging.DEBUG,
+		format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
 		handlers=[
 			logging.FileHandler(log_filename),
-		]
+		],
+		force=True  # Override any existing logging configuration
 	)
 	logger.info(f"Template matching standalone mode - Log file: {log_filename}")
 	print(f"Log file: {log_filename}")  # Print to console only for standalone mode
