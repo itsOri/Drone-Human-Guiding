@@ -489,7 +489,7 @@ def get_object_info(results, target_id):
     return None
 
 
-def get_selected_id_in_frame(results, target_ids):
+def get_selected_id_in_frame(results, person):
     """
     Returns the first target ID found in the frame that is in target_ids list.
     Only returns IDs that are persons (class 0).
@@ -501,9 +501,10 @@ def get_selected_id_in_frame(results, target_ids):
     Returns:
         int or None: Matching target ID (person only) or None if not found.
     """
+    target_ids = person.history
     ids_in_frame = get_ids_in_frame(results)
-    logger.info(f"ids_in_frame: {ids_in_frame}")
-    logger.info(f"target: {target_ids}")
+    logger.info(f"ids found in current frame: {ids_in_frame}")
+    logger.info(f"{person.type} history ids are: {target_ids}")
     
     # ids detected that are in target ids
     ids_detected = []
@@ -542,7 +543,7 @@ def find_id_in_frame(results, person, persons_dict, all_persons_in_frame, all_pe
     if exclude_ids is None:
         exclude_ids = []
 
-    selected_id = get_selected_id_in_frame(results, person.history)
+    selected_id = get_selected_id_in_frame(results, person)
 
     # enters here in case selected_id that appeared in past frames was lost
     if not selected_id and person.id_was_seen:
@@ -1325,7 +1326,7 @@ def main():
     init_logs()
 
     # Create Person objects for tracking
-    selected_person = Person(person_type="USER")
+    user_person = Person(person_type="USER")
     target_person = Person(person_type="TARGET")
 
     persons_dict = {}  # Template dictionary for persons (used for both following and target tracking)
@@ -1400,28 +1401,28 @@ def main():
             # Only persons (class 0) are used for template matching
             all_persons_in_frame, all_persons_centers_dict = update_templates(results, frame, persons_dict)
                 
-            user_getter_thread = init_input_thread(selected_person, target_person, user_getter_thread, results)
+            user_getter_thread = init_input_thread(user_person, target_person, user_getter_thread, results)
 
             # Initialize variables
             is_id_found = False
             is_target_found = False
 
             # Only process tracking if we have valid YOLO results
-            if results is not None and selected_person.id:
+            if results is not None and user_person.id and user_person.history is not None:
                 # Target tracking logic (controlled by TARGET_TRACKING_ENABLED flag)
                 if TARGET_TRACKING_ENABLED:
                     # Use different input thread for target (asks for target objects)
-                    target_getter_thread = init_input_thread(target_person, selected_person, target_getter_thread, results)
+                    target_getter_thread = init_input_thread(target_person, user_person, target_getter_thread, results)
                     
                     #follow target - now with template matching support
                     # Exclude selected ID history from target template matching
                     # Only use persons for template matching (persons_dict is used for both selected and target)
                     is_target_found = find_id_in_frame(results, target_person, persons_dict, all_persons_in_frame, all_persons_centers_dict,
-                                                       exclude_ids=selected_person.history, tracking_type="Target")
+                                                       exclude_ids=user_person.history, tracking_type="Target")
                 
                 # saves the coordinates in person IMPORTANT DONT COMMENT
                 # Exclude target ID history from selected template matching
-                is_id_found = find_id_in_frame(results, selected_person, persons_dict, all_persons_in_frame, all_persons_centers_dict,
+                is_id_found = find_id_in_frame(results, user_person, persons_dict, all_persons_in_frame, all_persons_centers_dict,
                                                exclude_ids=target_person.history, tracking_type="Selected")
                 # TODO: pivot to new function that will take care of scanning the potential target objects
 
@@ -1440,20 +1441,20 @@ def main():
                     logger.info(f"[DETECTED] {objects_str}")
 
             # Show both original input ID and currently followed ID (may differ after template matching)
-            selected_input = selected_person.id
-            selected_following = selected_person.followed_id
-            if selected_following and selected_following not in selected_input:
-                logger.info(f"[Selected ID] Input: {selected_input}, Currently Following: {selected_following}")
+            user_person_ids = user_person.id
+            user_person_followed_id = user_person.followed_id
+            if user_person_followed_id and user_person_followed_id not in user_person_ids:
+                logger.info(f"[User ID] Input: {user_person_ids}, Currently Following: {user_person_followed_id}")
             else:
-                logger.info(f"[Selected ID] {selected_input}")
+                logger.info(f"[User ID] {user_person_ids}")
             
             if TARGET_TRACKING_ENABLED:
-                target_input = target_person.id
-                target_following = target_person.followed_id
-                if target_following and target_following not in target_input:
-                    logger.info(f"[Target ID] Input: {target_input}, Currently Following: {target_following}")
+                target_input_ids = target_person.id
+                target_followed_id = target_person.followed_id
+                if target_followed_id and target_followed_id not in target_input_ids:
+                    logger.info(f"[Target ID] Input: {target_input_ids}, Currently Following: {target_followed_id}")
                 else:
-                    logger.info(f"[Target ID] {target_input}")
+                    logger.info(f"[Target ID] {target_input_ids}")
             
             # Get target coordinates if target tracking is enabled
             target_coords = None
@@ -1471,7 +1472,7 @@ def main():
                     logger.warning("Target found but coordinates are None (target recently lost)")
 
             # Get coordinates directly (no interpolation)
-            coords = selected_person.coords
+            coords = user_person.coords
 
             drone.left_right_velocity, drone.for_back_velocity, drone.up_down_velocity, drone.yaw_velocity = control_drone(drone, coords, annotated_frame, HISTEREZIS_ENABLED, histerezis_on)
             logging.info(f"drone.for_back_velocity: {drone.for_back_velocity}, drone.yaw_velocity: {drone.yaw_velocity}, ")
@@ -1488,14 +1489,14 @@ def main():
             move_drone(drone)
 
             # Get last seen coordinates for visualization when persons are lost
-            selected_last_seen = selected_person.last_seen_center_coords
+            selected_last_seen = user_person.last_seen_center_coords
             target_last_seen = target_person.last_seen_center_coords if TARGET_TRACKING_ENABLED else None
             
             # Get current RRT path for drawing on annotated frame
             current_rrt_path = None
             if rrt_planner:
-                selected_actually_present = (selected_person.lost_counter == 0 and 
-                                            selected_person.coords is not None)
+                selected_actually_present = (user_person.lost_counter == 0 and 
+                                            user_person.coords is not None)
                 target_actually_present = (TARGET_TRACKING_ENABLED and 
                                           target_person.lost_counter == 0 and 
                                           target_person.coords is not None)
@@ -1534,13 +1535,13 @@ def main():
             
             # Create and write BW segmented frame with selected/target as colored dots and RRT* path
             if results is not None:
-                selected_followed_id = selected_person.followed_id
+                selected_followed_id = user_person.followed_id
                 target_followed_id = target_person.followed_id if TARGET_TRACKING_ENABLED else None
                 
                 # Check if IDs are actually present in the current frame (not just tracked with lost counter)
                 # This ensures path is deleted immediately when ID disappears, not after MAX_LOST_ID_FRAMES
-                selected_actually_present = (selected_person.lost_counter == 0 and 
-                                            selected_person.coords is not None)
+                selected_actually_present = (user_person.lost_counter == 0 and 
+                                            user_person.coords is not None)
                 target_actually_present = (TARGET_TRACKING_ENABLED and 
                                           target_person.lost_counter == 0 and 
                                           target_person.coords is not None)
