@@ -1321,7 +1321,7 @@ def main():
     print("="*60)
     print()
     
-    open_log_in_editor(LOG_FILENAME)
+    # open_log_in_editor(LOG_FILENAME)
 
     init_logs()
 

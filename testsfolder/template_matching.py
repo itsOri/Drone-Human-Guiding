@@ -10,6 +10,8 @@ import subprocess
 # When imported from main.py, this will use the root logger configured in main
 # When run standalone, it will create its own logger
 logger = logging.getLogger(__name__)
+DISTANCE_PENALTY_CURVE = 0.002  # Tunable parameter - bigger --> high distance penalty for small distances
+DIST_PENALTY_WEIGHT = 0.5  # Weight of distance penalty in final score
 
 try:
     # Try importing from same directory (when run from testsfolder)
@@ -31,7 +33,7 @@ PERSON_OUTPUT_FOLDER = f'./persons_data_{datetime.now().strftime("%Y-%m-%d_%H-%M
 VIDEO_PATH = "../videos/clean_video_2025-11-06_14-09-11.avi"
 
 MAX_RECENT_EXTRACTIONS = 20
-THRESHOLD_BEST_MATCH = 0.12
+THRESHOLD_BEST_MATCH = 0.12  # Threshold for best match decision (lower is stricter)
 
 # --- MAIN DATA STORE ---
 # This dictionary will hold the image histories for ALL detected persons.
@@ -175,7 +177,7 @@ def get_distance_penalty(center1, center2):
     distance = np.linalg.norm(np.array(center1) - np.array(center2))
     # Scale and exponentiate: adjust alpha for sensitivity
     alpha = 0.002  # Tune this value for desired curve
-    penalty = (1 - np.exp(-alpha * distance))
+    penalty = (1 - np.exp(- DISTANCE_PENALTY_CURVE * distance))
     return penalty
 
 def find_best_match(person, other_persons_dict, selected_id_templates, selected_id_last_center, all_persons_centers_dict):
@@ -214,7 +216,7 @@ def find_best_match(person, other_persons_dict, selected_id_templates, selected_
 		# Calculate penalty
 		candidate_center = all_persons_centers_dict[id]
 		current_penalty = get_distance_penalty(candidate_center, selected_id_last_center)
-		current_scores = [	template_match_file.template_match(template, candidate_img) + current_penalty
+		current_scores = [	((1-DIST_PENALTY_WEIGHT) * template_match_file.template_match(template, candidate_img) + DIST_PENALTY_WEIGHT * current_penalty) / 2
 							for template in selected_id_templates]
 		current_score = min(current_scores)
 		
