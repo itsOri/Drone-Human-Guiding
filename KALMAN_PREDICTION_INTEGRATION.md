@@ -6,7 +6,7 @@ Integrated the Kalman filter-based trajectory prediction from `kelman_implementa
 ## Changes Made
 
 ### 1. Import Addition
-- Added import: `from testsfolder.kelman_implementation import predict_trajectory`
+- Added import: `from components.kelman_implementation import predict_trajectory`
 
 ### 2. Container Structure Updates
 Both `selected_id_container` and `selected_target_container` now include:

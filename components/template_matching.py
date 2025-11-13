@@ -14,12 +14,12 @@ DISTANCE_PENALTY_CURVE = 0.002  # Tunable parameter - bigger --> high distance p
 DIST_PENALTY_WEIGHT = 0.7  # Weight of distance penalty in final score
 
 try:
-    # Try importing from same directory (when run from testsfolder)
+    # Try importing from same directory (when run from components)
     import template_matching_function as template_match_file
 except ImportError:
     try:
-        # Try importing from testsfolder package (when run from parent directory)
-        from testsfolder import template_matching_function as template_match_file
+        # Try importing from components package (when run from parent directory)
+        from components import template_matching_function as template_match_file
     except ImportError:
         # Last resort: add current directory to path and import
         import sys
@@ -30,7 +30,7 @@ except ImportError:
 # --- GLOBAL CONSTANTS & CONFIGURATION ---
 PERSON_OUTPUT_FOLDER = f'./persons_data_{datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}'
 #VIDEO_PATH = r"C:\Users\orifr\OneDrive - Technion\Documents\semester_f\project\drone_project_archives\Archive\clean_video_2025-10-17_17-25-20.avi"
-VIDEO_PATH = "../videos/clean_video_2025-11-06_14-09-11.avi"
+VIDEO_PATH = "../videos/clean_video_2025-11-13_12-48-04.avi"
 
 MAX_RECENT_EXTRACTIONS = 20
 THRESHOLD_BEST_MATCH = 0.1  # Threshold for best match decision (lower is stricter)
@@ -266,7 +266,7 @@ def display_video_frame_by_frame():
 
 	# This is the specific person we might want to re-identify if lost.
 	# The data collection happens for everyone regardless.
-	selected_id_to_track = 17
+	selected_id_to_track = 12
 
 	if not os.path.isfile(VIDEO_PATH):
 		logger.error(f"Video file not found at: {VIDEO_PATH}")
@@ -290,7 +290,7 @@ def display_video_frame_by_frame():
 
 			# YOLO automatically converts BGR to RGB internally, so pass the frame as-is
 			results = model.track(frame, persist=True, verbose=False, tracker="bytetrack.yaml", classes=[0])
-			print(results)
+			# print(results)
 			# --- CORE LOGIC ---
 			# 1. Extract all persons visible in the current frame.
 			# Extract from the original BGR frame
@@ -352,6 +352,7 @@ def setup_standalone_logging():
 		format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
 		handlers=[
 			logging.FileHandler(log_filename),
+			logging.StreamHandler()
 		],
 		force=True  # Override any existing logging configuration
 	)

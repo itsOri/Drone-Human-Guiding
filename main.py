@@ -128,9 +128,9 @@ import numpy as np
 import os
 import logging
 from datetime import datetime 
-from testsfolder import template_matching
-from testsfolder import RRTStar_New as rrt
-from testsfolder.kelman_implementation import predict_trajectory
+from components import template_matching
+from components import RRTStar_New as rrt
+from components.kelman_implementation import predict_trajectory
 import subprocess
 
 
@@ -153,6 +153,7 @@ class Person:
         self.lost_rounds = 0  # Number of template matching rounds completed while lost
         self.type = person_type # type of person: USER or TARGET
         self.other = None
+        self.current_results = None  # Shared reference to latest YOLO results for input validation
 
     def reset_details_on_new_id(self):
         """
@@ -194,7 +195,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Ensure template_matching module logs are also captured
-logging.getLogger('testsfolder.template_matching').setLevel(logging.DEBUG)
+logging.getLogger('components.template_matching').setLevel(logging.DEBUG)
 logging.getLogger('template_matching').setLevel(logging.DEBUG)
 
 
@@ -232,7 +233,7 @@ BLACK = (0, 0, 0)
 
 YAW_MOVING_VELOCITY = 5
 FB_MOVING_VELOCITY = 5
-DRONE_START_HEIGHT = 400 # 200 is good for outside, 70 for inside , 450 good outside
+DRONE_START_HEIGHT = 70 # 200 is good for outside, 70 for inside , 450 good outside
 MAX_LOST_ID_FRAMES = 20
 COORDINATE_HISTORY_SIZE = 30  # Number of frames to keep coordinate history for tracked persons
 
@@ -354,45 +355,60 @@ def is_person_class(results, id):
     Checks if the ID is a person class in the results.
     Returns True if the ID is a person class, False otherwise.
     """
+    print(f"in func id:{id}")
     for box in results[0].boxes:
         if hasattr(box, 'id') and box.id is not None:
             box_id = int(box.id.item()) if hasattr(box.id, 'item') else int(box.id)
             if box_id == id:
+                print("in is_person_class")
+                print(int(box.cls.item()))
                 return int(box.cls.item()) == 0
 
     return False
 
-def input_thread(current_person, other_person, results):
+def input_thread(current_person, other_person):
     user_input = input(f"[INPUT] Enter {current_person.type.capitalize()} Person ID to follow: ")
+    print("before try")
     try:
         selected_id = int(user_input)
-        
+        print(f"inside the if in input_thread")
         # Check if this ID is the same as target ID
+        print(other_person.id, selected_id in other_person.history)
         if other_person.id and selected_id in other_person.history:
             print(f"[ERROR] {current_person.type} ID {selected_id} is the same as {other_person.type} ID. USER and TARGET must be different.")
             logger.warning(f"Rejected {current_person.type} ID {selected_id} - same as {other_person.type} ID")
             return
         
-        if not is_person_class(results, selected_id):
+        print(2)
+        # Use the latest results stored in the person object
+        if current_person.current_results is None:
+            logger.error(f"No YOLO results available yet. Please wait for processing to start.")
+            return
+            
+        if not is_person_class(current_person.current_results, selected_id):
+            print(2.1)
             logger.error(f"ID {selected_id} is not a person. Skipping tracking.")
             return
-        
+        print(3)
         current_person.id.append(selected_id)
         current_person.history.append(selected_id)
         current_person.reset_details_on_new_id()
+        print(4)
         logger.info(f"{current_person.type} Person ID: {current_person.id}")
 
     except ValueError:
+        print("error")
         logger.warning(f"Invalid ID entered for {current_person.type} person.")
         current_person.id = []
 
+    print("finished input")
 
-# TODO check its generic func
-def init_id_getter_thread(selected_person, target_person, results):
+def init_id_getter_thread(selected_person, target_person):
     """
     Initializes and starts a background thread to continuously get user input for selected ID.
+    The thread will use the current_results attribute from the person object to validate IDs.
     """
-    thread = threading.Thread(target=input_thread, args=(selected_person, target_person, results))
+    thread = threading.Thread(target=input_thread, args=(selected_person, target_person))
     thread.daemon = True
     thread.start()
     return thread
@@ -1161,9 +1177,9 @@ def choose_best_match(person, current_ids_in_frame):
         return None
 
 
-def init_input_thread(current_person, other_person, current_getter_thread, results):
+def init_input_thread(current_person, other_person, current_getter_thread):
     if((not current_person.id) and not is_alive(current_getter_thread)):
-        current_getter_thread = init_id_getter_thread(current_person, other_person, results)
+        current_getter_thread = init_id_getter_thread(current_person, other_person)
     return current_getter_thread
 
 
@@ -1403,8 +1419,12 @@ def main():
             # Extract all persons visible in the current frame (for both following and target tracking)
             # Only persons (class 0) are used for template matching
             all_persons_in_frame, all_persons_centers_dict = update_templates(results, frame, persons_dict)
+            
+            # Update both person objects with latest results for input validation
+            user_person.current_results = results
+            target_person.current_results = results
                 
-            user_getter_thread = init_input_thread(user_person, target_person, user_getter_thread, results)
+            user_getter_thread = init_input_thread(user_person, target_person, user_getter_thread)
 
             # Initialize variables
             is_id_found = False
@@ -1415,7 +1435,7 @@ def main():
                 # Target tracking logic (controlled by TARGET_TRACKING_ENABLED flag)
                 if TARGET_TRACKING_ENABLED:
                     # Use different input thread for target (asks for target objects)
-                    target_getter_thread = init_input_thread(target_person, user_person, target_getter_thread, results)
+                    target_getter_thread = init_input_thread(target_person, user_person, target_getter_thread)
                     
                     #follow target - now with template matching support
                     # Exclude selected ID history from target template matching

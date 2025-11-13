@@ -2,8 +2,8 @@ runs/
 videos/
 yolo_models/
 photos/
-testsfolder/persons_segmented_final/
-testsfolder/persons_data_*/
+components/persons_segmented_final/
+components/persons_data_*/
 annotated_video_*
 clean_video_*
 .DS_Store
