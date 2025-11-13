@@ -11,7 +11,7 @@ import subprocess
 # When run standalone, it will create its own logger
 logger = logging.getLogger(__name__)
 DISTANCE_PENALTY_CURVE = 0.002  # Tunable parameter - bigger --> high distance penalty for small distances
-DIST_PENALTY_WEIGHT = 0.5  # Weight of distance penalty in final score
+DIST_PENALTY_WEIGHT = 0.7  # Weight of distance penalty in final score
 
 try:
     # Try importing from same directory (when run from testsfolder)
@@ -33,7 +33,7 @@ PERSON_OUTPUT_FOLDER = f'./persons_data_{datetime.now().strftime("%Y-%m-%d_%H-%M
 VIDEO_PATH = "../videos/clean_video_2025-11-06_14-09-11.avi"
 
 MAX_RECENT_EXTRACTIONS = 20
-THRESHOLD_BEST_MATCH = 0.12  # Threshold for best match decision (lower is stricter)
+THRESHOLD_BEST_MATCH = 0.1  # Threshold for best match decision (lower is stricter)
 
 # --- MAIN DATA STORE ---
 # This dictionary will hold the image histories for ALL detected persons.
@@ -216,16 +216,16 @@ def find_best_match(person, other_persons_dict, selected_id_templates, selected_
 		# Calculate penalty
 		candidate_center = all_persons_centers_dict[id]
 		current_penalty = get_distance_penalty(candidate_center, selected_id_last_center)
-		current_scores = [	((1-DIST_PENALTY_WEIGHT) * template_match_file.template_match(template, candidate_img) + DIST_PENALTY_WEIGHT * current_penalty) / 2
-							for template in selected_id_templates]
-		current_score = min(current_scores)
+		template_matching_scores = np.array([template_match_file.template_match(template, candidate_img) for template in selected_id_templates])
+		current_scores = ((1 - DIST_PENALTY_WEIGHT) * template_matching_scores + DIST_PENALTY_WEIGHT * current_penalty) / 2
+		best_score = min(current_scores)
 		
 		# Store detailed information
-		all_scores[id] = current_score
+		all_scores[id] = best_score
 		detailed_scores[id] = {
-			'best_score': current_score,
-			'penalty_score': current_penalty,
-			'all_template_scores': current_scores,
+			'final_best_score': best_score,
+			'dist_penalty_score': current_penalty,
+			'all_template_scores': template_matching_scores,
 			'worst_score': max(current_scores),
 			'avg_score': sum(current_scores) / len(current_scores)
 		}
