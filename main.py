@@ -231,7 +231,7 @@ BLACK = (0, 0, 0)
 
 YAW_MOVING_VELOCITY = 5
 FB_MOVING_VELOCITY = 5
-DRONE_START_HEIGHT = 70 # 200 is good for outside, 70 for inside , 450 good outside
+DRONE_START_HEIGHT = 400 # 200 is good for outside, 70 for inside , 450 good outside
 MAX_LOST_ID_FRAMES = 20
 COORDINATE_HISTORY_SIZE = 30  # Number of frames to keep coordinate history for tracked persons
 
@@ -1384,14 +1384,8 @@ def main():
             
             results = model.track(frame, persist=True, verbose=False, tracker="bytetrack.yaml", classes=BASE_DETECTION_CLASSES)
 
-            # filter out cars boxes AND masks from results so will not be seen in the frame
-            # IMPORTANT: Must filter both boxes and masks to keep them synchronized!
-            car_indices = (results[0].boxes.cls == 2)
-            results[0].boxes = results[0].boxes[~car_indices]
-            
-            # Filter masks too if they exist
-            if results[0].masks is not None:
-                results[0].masks.data = results[0].masks.data[~car_indices]
+            # Cars are now kept as obstacles for path planning (not filtered out)
+            # They will appear in the BW segmented frame as black obstacles for RRT*
 
             annotated_frame = results[0].plot(line_width=1)
             
