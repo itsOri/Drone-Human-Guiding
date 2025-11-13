@@ -152,6 +152,7 @@ class Person:
         self.best_match_candidates = {}  # Template matching candidates: {id: score}
         self.lost_rounds = 0  # Number of template matching rounds completed while lost
         self.type = person_type # type of person: USER or TARGET
+        self.other = None
 
     def reset_details_on_new_id(self):
         """
@@ -546,7 +547,7 @@ def find_id_in_frame(results, person, persons_dict, all_persons_in_frame, all_pe
     selected_id = get_selected_id_in_frame(results, person)
 
     # enters here in case selected_id that appeared in past frames was lost
-    if not selected_id and person.id_was_seen:
+    if (not selected_id) and person.id_was_seen:
         # in case window is over, take the best template matching result below threshold.
         # if no result found, go to next round. if max rounds reached, enter the selected_id manually.
         if person.lost_counter % TEMPLATE_M_WAITING_FRAMES_WINDOW == 0 and person.lost_counter != 0:
@@ -1137,7 +1138,7 @@ def choose_best_match(person, current_ids_in_frame):
         return None
     
     # Filter candidates to only those currently in frame
-    valid_candidates = {id: score for id, score in candidates.items() if id in current_ids_in_frame}
+    valid_candidates = {id: score for id, score in candidates.items() if id in current_ids_in_frame and id not in person.other.id}
     
     if not valid_candidates:
         logger.info(f"[TEMPLATE_MATCHING] No valid candidates in frame (all candidates left the scene)")
@@ -1328,6 +1329,8 @@ def main():
     # Create Person objects for tracking
     user_person = Person(person_type="USER")
     target_person = Person(person_type="TARGET")
+    user_person.other = target_person
+    target_person.other = user_person
 
     persons_dict = {}  # Template dictionary for persons (used for both following and target tracking)
     
@@ -1384,17 +1387,17 @@ def main():
             
             results = model.track(frame, persist=True, verbose=False, tracker="bytetrack.yaml", classes=BASE_DETECTION_CLASSES)
 
-            # filter out cars boxes AND masks from results so will not be seen in the frame
-            # IMPORTANT: Must filter both boxes and masks to keep them synchronized!
-            car_indices = (results[0].boxes.cls == 2)
-            results[0].boxes = results[0].boxes[~car_indices]
-            
-            # Filter masks too if they exist
-            if results[0].masks is not None:
-                results[0].masks.data = results[0].masks.data[~car_indices]
-
             annotated_frame = results[0].plot(line_width=1)
             
+            # # filter out cars boxes AND masks from results so will not be seen in the frame
+            # # IMPORTANT: Must filter both boxes and masks to keep them synchronized!
+            # car_indices = (results[0].boxes.cls == 2)
+            # results[0].boxes = results[0].boxes[~car_indices]
+            
+            # # Filter masks too if they exist
+            # if results[0].masks is not None:
+            #     results[0].masks.data = results[0].masks.data[~car_indices]
+
             logger.info(f"[OPTIMIZATION] Updating templates (frame {yolo_frame_counter})")
             
             # Extract all persons visible in the current frame (for both following and target tracking)
@@ -1408,7 +1411,7 @@ def main():
             is_target_found = False
 
             # Only process tracking if we have valid YOLO results
-            if results is not None and user_person.id and user_person.history is not None:
+            if (results is not None) and user_person.id and (user_person.history is not None):
                 # Target tracking logic (controlled by TARGET_TRACKING_ENABLED flag)
                 if TARGET_TRACKING_ENABLED:
                     # Use different input thread for target (asks for target objects)
