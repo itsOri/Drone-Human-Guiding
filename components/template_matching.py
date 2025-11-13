@@ -234,7 +234,7 @@ def find_best_match(person, other_persons_dict, selected_id_templates, selected_
 	logger.info(f"[TEMPLATE_MATCHING] === DETAILED SCORE ANALYSIS ===")
 	for id in sorted(all_scores.keys()):
 		scores_info = detailed_scores[id]
-		logger.info(f"[TEMPLATE_MATCHING] ID {id:2d}: BEST={scores_info['best_score']:10.4f} | AVG={scores_info['avg_score']:10.4f} | WORST={scores_info['worst_score']:10.4f} | PENALTY={scores_info['penalty_score']:10.4f}")
+		logger.info(f"[TEMPLATE_MATCHING] ID {id:2d}: BEST={scores_info['final_best_score']:10.4f} | AVG={scores_info['avg_score']:10.4f} | WORST={scores_info['worst_score']:10.4f} | PENALTY={scores_info['dist_penalty_score']:10.4f}")
 		# Log first few individual scores to see the range
 		sample_scores = scores_info['all_template_scores'][:5]  # Show first 5 template scores
 		logger.info(f"[TEMPLATE_MATCHING]      Sample scores: {[f'{s:.4f}' for s in sample_scores]}")
