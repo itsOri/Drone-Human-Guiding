@@ -355,53 +355,40 @@ def is_person_class(results, id):
     Checks if the ID is a person class in the results.
     Returns True if the ID is a person class, False otherwise.
     """
-    print(f"in func id:{id}")
     for box in results[0].boxes:
         if hasattr(box, 'id') and box.id is not None:
             box_id = int(box.id.item()) if hasattr(box.id, 'item') else int(box.id)
             if box_id == id:
-                print("in is_person_class")
-                print(int(box.cls.item()))
                 return int(box.cls.item()) == 0
 
     return False
 
 def input_thread(current_person, other_person):
     user_input = input(f"[INPUT] Enter {current_person.type.capitalize()} Person ID to follow: ")
-    print("before try")
     try:
         selected_id = int(user_input)
-        print(f"inside the if in input_thread")
         # Check if this ID is the same as target ID
-        print(other_person.id, selected_id in other_person.history)
         if other_person.id and selected_id in other_person.history:
             print(f"[ERROR] {current_person.type} ID {selected_id} is the same as {other_person.type} ID. USER and TARGET must be different.")
             logger.warning(f"Rejected {current_person.type} ID {selected_id} - same as {other_person.type} ID")
             return
         
-        print(2)
         # Use the latest results stored in the person object
         if current_person.current_results is None:
             logger.error(f"No YOLO results available yet. Please wait for processing to start.")
             return
             
         if not is_person_class(current_person.current_results, selected_id):
-            print(2.1)
             logger.error(f"ID {selected_id} is not a person. Skipping tracking.")
             return
-        print(3)
         current_person.id.append(selected_id)
         current_person.history.append(selected_id)
         current_person.reset_details_on_new_id()
-        print(4)
         logger.info(f"{current_person.type} Person ID: {current_person.id}")
 
     except ValueError:
-        print("error")
         logger.warning(f"Invalid ID entered for {current_person.type} person.")
         current_person.id = []
-
-    print("finished input")
 
 def init_id_getter_thread(selected_person, target_person):
     """
