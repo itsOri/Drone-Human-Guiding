@@ -230,9 +230,9 @@ RRT_PATH_COLOR = (255, 0, 255)  # Magenta/Purple color for path (BGR)
 
 BLACK = (0, 0, 0)
 
-YAW_MOVING_VELOCITY = 5
-FB_MOVING_VELOCITY = 5
-DRONE_START_HEIGHT = 400 # 200 is good for outside, 70 for inside , 450 good outside
+YAW_MOVING_VELOCITY = 4
+FB_MOVING_VELOCITY = 8
+DRONE_START_HEIGHT = 450 # 200 is good for outside, 70 for inside , 450 good outside
 MAX_LOST_ID_FRAMES = 20
 COORDINATE_HISTORY_SIZE = 30  # Number of frames to keep coordinate history for tracked persons
 
