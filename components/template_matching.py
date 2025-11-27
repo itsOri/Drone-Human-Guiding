@@ -68,6 +68,9 @@ def extract_person_from_frame(results, target_id, original_frame, frame_number):
 	
 	mask = results[0].masks[person_index]
 	binary_mask = mask.data[0].cpu().numpy().astype("uint8")
+	binary_mask = cv2.resize(binary_mask, 
+                         (original_frame.shape[1], original_frame.shape[0]),
+                         interpolation=cv2.INTER_NEAREST)
 	extracted_person = cv2.bitwise_and(original_frame, original_frame, mask=binary_mask)
 	box = results[0].boxes.xyxy[person_index].cpu().numpy().astype(int)
 	x1, y1, x2, y2 = box
@@ -110,6 +113,9 @@ def extract_all_visible_persons(results, original_frame):
 		
 		mask = all_masks[i]
 		binary_mask = mask.data[0].cpu().numpy().astype("uint8")
+		binary_mask = cv2.resize(binary_mask, 
+                         (original_frame.shape[1], original_frame.shape[0]),
+                         interpolation=cv2.INTER_NEAREST)
 		extracted_person = cv2.bitwise_and(original_frame, original_frame, mask=binary_mask)
 		x1, y1, x2, y2 = all_boxes[i]
 		cropped_person = extracted_person[y1:y2, x1:x2]
@@ -244,7 +250,7 @@ def find_best_match(person, other_persons_dict, selected_id_templates, selected_
 	updates = []
 	
 	for id, score in all_scores.items():
-		if id not in best_match_candidates or score < best_match_candidates[id]:
+		if id not in best_match_candidates or score <  best_match_candidates[id]:
 			# New ID or better score - update
 			best_match_candidates[id] = score
 			updates.append(f"ID {id}: {score:.4f}")

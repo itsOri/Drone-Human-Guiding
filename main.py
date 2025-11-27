@@ -231,13 +231,13 @@ RRT_PATH_COLOR = (255, 0, 255)  # Magenta/Purple color for path (BGR)
 
 BLACK = (0, 0, 0)
 
-YAW_MOVING_VELOCITY = 4
-FB_MOVING_VELOCITY = 8
-DRONE_START_HEIGHT = 70 # 200 is good for outside, 70 for inside , 450 good outside
+YAW_MOVING_VELOCITY = 5
+FB_MOVING_VELOCITY = 15
+DRONE_START_HEIGHT = 50 # 200 is good for outside, 70 for inside , 450 good outside
 MAX_LOST_ID_FRAMES = 20
 COORDINATE_HISTORY_SIZE = 30  # Number of frames to keep coordinate history for tracked persons
 
-TEMPLATE_M_WAITING_FRAMES_WINDOW = 15  # Number of lost frames to wait before checking best template match
+TEMPLATE_M_WAITING_FRAMES_WINDOW = 10  # Number of lost frames to wait before checking best template match
 MAX_LOST_ROUNDS = 3
 
 # === YOLO DETECTION CLASSES ===
@@ -1141,7 +1141,7 @@ def choose_best_match(person, current_ids_in_frame):
         return None
     
     # Filter candidates to only those currently in frame
-    valid_candidates = {id: score for id, score in candidates.items() if id in current_ids_in_frame and id not in person.other.id}
+    valid_candidates = {id: score for id, score in candidates.items() if id in current_ids_in_frame and id not in person.other.history}
     
     if not valid_candidates:
         logger.info(f"[TEMPLATE_MATCHING] No valid candidates in frame (all candidates left the scene)")
@@ -1201,7 +1201,7 @@ class RRTPathPlanner:
                         bw_frame,
                         selected_center,
                         target_center,
-                        max_iter=max_iter,
+                        max_iter=3000   ,
                         delta=delta,
                         radius=radius
                     )
